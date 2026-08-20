@@ -22,6 +22,13 @@
     <link rel="stylesheet" href="src/index.css">
   </head>
   <body>
+    <!-- QR scan gate shown before AR starts. -->
+    <div id="qr-gate">
+      <video id="qr-video" playsinline muted></video>
+      <div id="qr-frame"></div>
+      <p id="qr-status">Arahkan kamera ke QR code</p>
+    </div>
+
     <!-- The main canvas used for drawing by the app. -->
     <canvas id="camerafeed"></canvas>
     <script type="module" src="src/app.js"></script>
