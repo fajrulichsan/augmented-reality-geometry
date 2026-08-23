@@ -1,9 +1,9 @@
-// Define an 8th Wall XR Camera Pipeline Module that adds a cube to a threejs scene on startup.
-// Tapping a face highlights it temporarily (without judging whether it's the "right" one, per
-// the AR observation-prompt UX: the student explores, the app doesn't grade). Double-tapping a
-// face unfolds the cube into its flat net (like unfolding a cardboard box); double-tapping again
-// folds it back up. Tapping anywhere else recenters the scene as before. A one-finger drag
-// rotates the cube; a two-finger pinch scales it up or down.
+// Define an 8th Wall XR Camera Pipeline Module that adds a 3D shape to a threejs scene on
+// startup. The shape shown can be switched at runtime (kubus, balok, prisma segitiga, prisma
+// segilima, limas segitiga, limas segilima) via setShape(). Only the cube supports the
+// tap-to-highlight-face / double-tap-to-unfold-net behavior, since it's built from separate face
+// planes; other shapes are solid meshes. Tapping anywhere else recenters the scene. A one-finger
+// drag rotates the shape; a two-finger pinch scales it up or down.
 import * as THREE from 'three';
 
 import cubeTexture from './assets/cube-texture.png'
@@ -25,13 +25,71 @@ const easeInOutQuad = (t) => (t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t)
 const HIGHLIGHT_COLOR = 0xFFEB3B
 const HIGHLIGHT_DURATION_MS = 1500
 
-export const initScenePipelineModule = () => {
-  const purple = 0xAD50FF
+const PURPLE = 0xAD50FF
 
-  let cubeGroup
+export const initScenePipelineModule = () => {
+  // Builds the cube out of 6 separate face planes so they can unfold into a net. Returns the
+  // faces so tap-to-highlight/double-tap-to-unfold can operate on them.
+  const buildCubeNet = () => {
+    const texture = new THREE.TextureLoader().load(cubeTexture)
+    const group = new THREE.Group()
+
+    const faces = FACE_DEFS.map(({foldedPos, foldedRot, netPos}) => {
+      const material = new THREE.MeshBasicMaterial({map: texture, color: PURPLE, side: THREE.DoubleSide})
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material)
+      mesh.castShadow = true
+
+      mesh.userData.folded = {
+        position: new THREE.Vector3(...foldedPos),
+        quaternion: new THREE.Quaternion().setFromEuler(new THREE.Euler(...foldedRot)),
+      }
+      mesh.userData.net = {
+        position: new THREE.Vector3(...netPos),
+        quaternion: new THREE.Quaternion(),
+      }
+      mesh.userData.highlightUntil = 0
+
+      mesh.position.copy(mesh.userData.folded.position)
+      mesh.quaternion.copy(mesh.userData.folded.quaternion)
+
+      group.add(mesh)
+      return mesh
+    })
+
+    return {group, faces, groundOffset: 0.5}
+  }
+
+  // Builds a solid single-mesh shape (no net/fold, no per-face highlight).
+  const buildSolid = (geometry, groundOffset, rotationY = 0) => {
+    const material = new THREE.MeshStandardMaterial({color: PURPLE})
+    const mesh = new THREE.Mesh(geometry, material)
+    mesh.castShadow = true
+
+    const group = new THREE.Group()
+    group.rotation.y = rotationY
+    group.add(mesh)
+
+    return {group, faces: [], groundOffset}
+  }
+
+  const SHAPE_BUILDERS = {
+    kubus: buildCubeNet,
+    balok: () => buildSolid(new THREE.BoxGeometry(1.4, 1, 0.8), 0.5),
+    'prisma-segitiga': () => buildSolid(new THREE.CylinderGeometry(0.75, 0.75, 1, 3), 0.5, Math.PI / 6),
+    'prisma-segilima': () => buildSolid(new THREE.CylinderGeometry(0.7, 0.7, 1, 5), 0.5, Math.PI / 2),
+    'limas-segitiga': () => buildSolid(new THREE.ConeGeometry(0.8, 1.1, 3), 0.55, Math.PI / 6),
+    'limas-segilima': () => buildSolid(new THREE.ConeGeometry(0.8, 1.1, 5), 0.55, Math.PI / 2),
+  }
+
+  let currentShapeId = 'kubus'
+  let shapeGroup
   let faces = []
 
-  // Open animation state: t goes from 0 (folded) to 1 (fully unfolded net).
+  let sceneRef = null
+  let pendingShapeId = null
+
+  // Open animation state: t goes from 0 (folded) to 1 (fully unfolded net). Only meaningful for
+  // the cube.
   let isOpen = false
   let t = 0
   let tFrom = 0
@@ -57,7 +115,32 @@ export const initScenePipelineModule = () => {
   let pinchStartDistance = 0
   let pinchStartScale = 1
 
-  // Populates a cube into an XR scene and sets the initial camera position.
+  // Removes the current shape from the scene (if any) and adds the requested one in its place.
+  const switchShape = (shapeId) => {
+    if (!sceneRef || !SHAPE_BUILDERS[shapeId] || shapeId === currentShapeId) {
+      return
+    }
+
+    if (shapeGroup) {
+      sceneRef.remove(shapeGroup)
+    }
+
+    const built = SHAPE_BUILDERS[shapeId]()
+    shapeGroup = built.group
+    shapeGroup.position.set(0, built.groundOffset, 0)
+    faces = built.faces
+
+    currentShapeId = shapeId
+    isOpen = false
+    t = 0
+    tFrom = 0
+    tTo = 0
+    lastTapFace = null
+
+    sceneRef.add(shapeGroup)
+  }
+
+  // Populates the initial shape into an XR scene and sets the initial camera position.
   const initXrScene = ({scene, camera, renderer}) => {
     // Enable shadows in the rednerer.
     renderer.shadowMap.enabled = true
@@ -67,36 +150,11 @@ export const initScenePipelineModule = () => {
     directionalLight.position.set(5, 10, 7)
     directionalLight.castShadow = true
     scene.add(directionalLight)
+    scene.add(new THREE.AmbientLight(0xffffff, 0.4))
 
-    // Build a purple cube out of 6 separate face planes so they can unfold into a net.
-    const texture = new THREE.TextureLoader().load(cubeTexture)
-
-    cubeGroup = new THREE.Group()
-    cubeGroup.position.set(0, 0.5, 0)
-
-    faces = FACE_DEFS.map(({foldedPos, foldedRot, netPos}) => {
-      const material = new THREE.MeshBasicMaterial({map: texture, color: purple, side: THREE.DoubleSide})
-      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material)
-      mesh.castShadow = true
-
-      mesh.userData.folded = {
-        position: new THREE.Vector3(...foldedPos),
-        quaternion: new THREE.Quaternion().setFromEuler(new THREE.Euler(...foldedRot)),
-      }
-      mesh.userData.net = {
-        position: new THREE.Vector3(...netPos),
-        quaternion: new THREE.Quaternion(),
-      }
-      mesh.userData.highlightUntil = 0
-
-      mesh.position.copy(mesh.userData.folded.position)
-      mesh.quaternion.copy(mesh.userData.folded.quaternion)
-
-      cubeGroup.add(mesh)
-      return mesh
-    })
-
-    scene.add(cubeGroup)
+    sceneRef = scene
+    switchShape(pendingShapeId || currentShapeId)
+    pendingShapeId = null
 
     // Add a plane that can receive shadows.
     const planeGeometry = new THREE.PlaneGeometry(2000, 2000)
@@ -153,7 +211,7 @@ export const initScenePipelineModule = () => {
     faces.forEach((mesh) => {
       if (mesh.userData.highlightUntil && now >= mesh.userData.highlightUntil) {
         mesh.userData.highlightUntil = 0
-        mesh.material.color.setHex(purple)
+        mesh.material.color.setHex(PURPLE)
       }
     })
   }
@@ -161,8 +219,13 @@ export const initScenePipelineModule = () => {
   // Returns true if the tap hit a cube face. A single tap highlights the face temporarily,
   // without answering whether it's the correct one for whatever aspect the student is
   // exploring. A second tap on the same face within DOUBLE_TAP_WINDOW_MS toggles the
-  // fold/unfold animation instead.
+  // fold/unfold animation instead. No-op (returns false) for shapes other than the cube, since
+  // they have no individual face meshes.
   const handleCubeTap = (clientX, clientY, canvas, camera) => {
+    if (faces.length === 0) {
+      return false
+    }
+
     const rect = canvas.getBoundingClientRect()
     pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1
     pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1
@@ -219,7 +282,7 @@ export const initScenePipelineModule = () => {
       )
 
       // Tapping a cube face highlights it (double-tap folds/unfolds the net); tapping anywhere
-      // else recenters content. Dragging with one finger rotates the cube instead of tapping;
+      // else recenters content. Dragging with one finger rotates the shape instead of tapping;
       // pinching with two fingers scales it up or down.
       canvas.addEventListener(
         'touchstart', (e) => {
@@ -232,7 +295,7 @@ export const initScenePipelineModule = () => {
           } else if (e.touches.length === 2) {
             dragTouchId = null
             pinchStartDistance = touchDistance(e.touches[0], e.touches[1])
-            pinchStartScale = cubeGroup.scale.x
+            pinchStartScale = shapeGroup.scale.x
           }
         }, true
       )
@@ -244,7 +307,7 @@ export const initScenePipelineModule = () => {
             const scale = THREE.MathUtils.clamp(
               pinchStartScale * (distance / pinchStartDistance), MIN_SCALE, MAX_SCALE
             )
-            cubeGroup.scale.setScalar(scale)
+            shapeGroup.scale.setScalar(scale)
             return
           }
 
@@ -263,8 +326,8 @@ export const initScenePipelineModule = () => {
           }
           dragMoved = true
 
-          cubeGroup.rotation.y += deltaX * ROTATE_SPEED
-          cubeGroup.rotation.x += deltaY * ROTATE_SPEED
+          shapeGroup.rotation.y += deltaX * ROTATE_SPEED
+          shapeGroup.rotation.x += deltaY * ROTATE_SPEED
           dragLastX = touch.clientX
           dragLastY = touch.clientY
         }, true
@@ -298,6 +361,19 @@ export const initScenePipelineModule = () => {
     onUpdate: () => {
       updateAnimation()
       updateHighlights()
+    },
+
+    // Switches the displayed shape. Can be called before the scene has started (e.g. from a UI
+    // event fired before onStart runs); the request is applied once the scene is ready.
+    setShape: (shapeId) => {
+      if (!SHAPE_BUILDERS[shapeId]) {
+        return
+      }
+      if (!sceneRef) {
+        pendingShapeId = shapeId
+        return
+      }
+      switchShape(shapeId)
     },
   }
 }

@@ -22,11 +22,20 @@
     <link rel="stylesheet" href="src/index.css">
   </head>
   <body>
-    <!-- QR scan gate shown before AR starts. -->
-    <div id="qr-gate">
-      <video id="qr-video" playsinline muted></video>
-      <div id="qr-frame"></div>
-      <p id="qr-status">Arahkan kamera ke QR code</p>
+    <!-- Toggle button that opens the shape-picker popup. -->
+    <button id="shape-toggle" aria-label="Pilih bangun ruang" aria-expanded="false">&#9881;</button>
+
+    <!-- Popup with a dropdown to pick which 3D shape is displayed. -->
+    <div id="shape-popup" class="hidden">
+      <label for="shape-select">Pilih Bangun Ruang</label>
+      <select id="shape-select">
+        <option value="kubus" selected>Kubus</option>
+        <option value="balok">Balok</option>
+        <option value="prisma-segitiga">Prisma Segitiga</option>
+        <option value="prisma-segilima">Prisma Segilima</option>
+        <option value="limas-segitiga">Limas Segitiga</option>
+        <option value="limas-segilima">Limas Segilima</option>
+      </select>
     </div>
 
     <!-- The main canvas used for drawing by the app. -->
