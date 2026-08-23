@@ -6,7 +6,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "jsqr": "^1.4.0",
     "three": "^0.183.2"
   },
   "devDependencies": {
