@@ -1,6 +1,9 @@
 // Define an 8th Wall XR Camera Pipeline Module that adds a cube to a threejs scene on startup.
-// Tapping the cube unfolds it into its flat net (like unfolding a cardboard box); tapping
-// again folds it back up. Tapping anywhere else recenters the scene as before.
+// Tapping a face highlights it temporarily (without judging whether it's the "right" one, per
+// the AR observation-prompt UX: the student explores, the app doesn't grade). Double-tapping a
+// face unfolds the cube into its flat net (like unfolding a cardboard box); double-tapping again
+// folds it back up. Tapping anywhere else recenters the scene as before. A one-finger drag
+// rotates the cube; a two-finger pinch scales it up or down.
 import * as THREE from 'three';
 
 import cubeTexture from './assets/cube-texture.png'
@@ -19,6 +22,9 @@ const FACE_DEFS = [
 const ANIM_DURATION_MS = 600
 const easeInOutQuad = (t) => (t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t)
 
+const HIGHLIGHT_COLOR = 0xFFEB3B
+const HIGHLIGHT_DURATION_MS = 1500
+
 export const initScenePipelineModule = () => {
   const purple = 0xAD50FF
 
@@ -34,6 +40,22 @@ export const initScenePipelineModule = () => {
 
   const raycaster = new THREE.Raycaster()
   const pointer = new THREE.Vector2()
+
+  let lastTapTime = 0
+  let lastTapFace = null
+  const DOUBLE_TAP_WINDOW_MS = 350
+
+  // One-finger drag-to-rotate / two-finger pinch-to-scale state.
+  const ROTATE_SPEED = 0.006
+  const MIN_SCALE = 0.4
+  const MAX_SCALE = 3
+  const DRAG_THRESHOLD_PX = 10
+  let dragTouchId = null
+  let dragLastX = 0
+  let dragLastY = 0
+  let dragMoved = false
+  let pinchStartDistance = 0
+  let pinchStartScale = 1
 
   // Populates a cube into an XR scene and sets the initial camera position.
   const initXrScene = ({scene, camera, renderer}) => {
@@ -65,6 +87,7 @@ export const initScenePipelineModule = () => {
         position: new THREE.Vector3(...netPos),
         quaternion: new THREE.Quaternion(),
       }
+      mesh.userData.highlightUntil = 0
 
       mesh.position.copy(mesh.userData.folded.position)
       mesh.quaternion.copy(mesh.userData.folded.quaternion)
@@ -118,18 +141,57 @@ export const initScenePipelineModule = () => {
     })
   }
 
-  // Returns true if the tap hit a cube face (and toggles the fold/unfold animation).
+  // Flashes a face's material to the highlight color, then fades it back to its own color.
+  const highlightFace = (mesh) => {
+    mesh.material.color.setHex(HIGHLIGHT_COLOR)
+    mesh.userData.highlightUntil = performance.now() + HIGHLIGHT_DURATION_MS
+  }
+
+  // Fades any faces whose highlight has expired back to the cube's base color.
+  const updateHighlights = () => {
+    const now = performance.now()
+    faces.forEach((mesh) => {
+      if (mesh.userData.highlightUntil && now >= mesh.userData.highlightUntil) {
+        mesh.userData.highlightUntil = 0
+        mesh.material.color.setHex(purple)
+      }
+    })
+  }
+
+  // Returns true if the tap hit a cube face. A single tap highlights the face temporarily,
+  // without answering whether it's the correct one for whatever aspect the student is
+  // exploring. A second tap on the same face within DOUBLE_TAP_WINDOW_MS toggles the
+  // fold/unfold animation instead.
   const handleCubeTap = (clientX, clientY, canvas, camera) => {
     const rect = canvas.getBoundingClientRect()
     pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1
     pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1
 
     raycaster.setFromCamera(pointer, camera)
-    const hit = raycaster.intersectObjects(faces, false).length > 0
-    if (hit) {
-      setOpen(!isOpen)
+    const intersection = raycaster.intersectObjects(faces, false)[0]
+    if (!intersection) {
+      return false
     }
-    return hit
+
+    const face = intersection.object
+    const now = performance.now()
+    const isDoubleTap = face === lastTapFace && now - lastTapTime < DOUBLE_TAP_WINDOW_MS
+
+    if (isDoubleTap) {
+      setOpen(!isOpen)
+      lastTapFace = null
+    } else {
+      highlightFace(face)
+      lastTapFace = face
+      lastTapTime = now
+    }
+    return true
+  }
+
+  const touchDistance = (touchA, touchB) => {
+    const dx = touchA.clientX - touchB.clientX
+    const dy = touchA.clientY - touchB.clientY
+    return Math.hypot(dx, dy)
   }
 
   // Return a camera pipeline module that adds scene elements on start.
@@ -156,14 +218,73 @@ export const initScenePipelineModule = () => {
         {origin: camera.position, facing: camera.quaternion}
       )
 
-      // Tapping a cube face folds/unfolds the net. Tapping anywhere else recenters content
-      // (the previous behavior), so the two gestures share the same single-finger tap.
+      // Tapping a cube face highlights it (double-tap folds/unfolds the net); tapping anywhere
+      // else recenters content. Dragging with one finger rotates the cube instead of tapping;
+      // pinching with two fingers scales it up or down.
       canvas.addEventListener(
         'touchstart', (e) => {
-          if (e.touches.length !== 1) {
+          if (e.touches.length === 1) {
+            const touch = e.touches[0]
+            dragTouchId = touch.identifier
+            dragLastX = touch.clientX
+            dragLastY = touch.clientY
+            dragMoved = false
+          } else if (e.touches.length === 2) {
+            dragTouchId = null
+            pinchStartDistance = touchDistance(e.touches[0], e.touches[1])
+            pinchStartScale = cubeGroup.scale.x
+          }
+        }, true
+      )
+
+      canvas.addEventListener(
+        'touchmove', (e) => {
+          if (e.touches.length === 2) {
+            const distance = touchDistance(e.touches[0], e.touches[1])
+            const scale = THREE.MathUtils.clamp(
+              pinchStartScale * (distance / pinchStartDistance), MIN_SCALE, MAX_SCALE
+            )
+            cubeGroup.scale.setScalar(scale)
             return
           }
-          const touch = e.touches[0]
+
+          if (dragTouchId === null) {
+            return
+          }
+          const touch = Array.from(e.touches).find((t) => t.identifier === dragTouchId)
+          if (!touch) {
+            return
+          }
+
+          const deltaX = touch.clientX - dragLastX
+          const deltaY = touch.clientY - dragLastY
+          if (!dragMoved && Math.hypot(touch.clientX - dragLastX, touch.clientY - dragLastY) < DRAG_THRESHOLD_PX) {
+            return
+          }
+          dragMoved = true
+
+          cubeGroup.rotation.y += deltaX * ROTATE_SPEED
+          cubeGroup.rotation.x += deltaY * ROTATE_SPEED
+          dragLastX = touch.clientX
+          dragLastY = touch.clientY
+        }, true
+      )
+
+      canvas.addEventListener(
+        'touchend', (e) => {
+          if (e.touches.length > 0) {
+            return
+          }
+
+          const wasDragOrPinch = dragMoved || pinchStartDistance > 0
+          dragTouchId = null
+          pinchStartDistance = 0
+
+          if (wasDragOrPinch) {
+            return
+          }
+
+          const touch = e.changedTouches[0]
           const hitCube = handleCubeTap(touch.clientX, touch.clientY, canvas, camera)
           if (!hitCube) {
             XR8.XrController.recenter()
@@ -173,9 +294,10 @@ export const initScenePipelineModule = () => {
     },
 
     // onUpdate is called once per camera frame, before rendering. Used to advance the
-    // fold/unfold animation.
+    // fold/unfold animation and clear expired face highlights.
     onUpdate: () => {
       updateAnimation()
+      updateHighlights()
     },
   }
 }
