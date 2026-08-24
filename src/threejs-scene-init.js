@@ -1,9 +1,10 @@
 // Define an 8th Wall XR Camera Pipeline Module that adds a 3D shape to a threejs scene on
 // startup. The shape shown can be switched at runtime (kubus, balok, prisma segitiga, prisma
-// segilima, limas segitiga, limas segilima) via setShape(). Only the cube supports the
-// tap-to-highlight-face / double-tap-to-unfold-net behavior, since it's built from separate face
-// planes; other shapes are solid meshes. Tapping anywhere else recenters the scene. A one-finger
-// drag rotates the shape; a two-finger pinch scales it up or down.
+// segilima, limas segitiga, limas segilima) via setShape(). Only the cube supports
+// tap-to-highlight-face, tap-to-mark-vertex, and double-tap-to-unfold-net, since it's built from
+// separate face planes and corner markers; other shapes are solid meshes. Tapping anywhere else
+// recenters the scene. A one-finger drag rotates the shape; a two-finger pinch scales it up or
+// down.
 import * as THREE from 'three';
 
 import cubeTexture from './assets/cube-texture.png'
@@ -23,9 +24,10 @@ const ANIM_DURATION_MS = 600
 const easeInOutQuad = (t) => (t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t)
 
 const HIGHLIGHT_COLOR = 0xFFEB3B
-const HIGHLIGHT_DURATION_MS = 1500
 
 const PURPLE = 0xAD50FF
+const VERTEX_COLOR = 0xFFFFFF
+const VERTEX_RADIUS = 0.06
 const EDGE_RADIUS = 0.02
 const EDGE_MATERIAL = new THREE.MeshBasicMaterial({color: 0x000000})
 
@@ -56,8 +58,10 @@ const addThickEdges = (mesh, geometry) => {
 }
 
 export const initScenePipelineModule = () => {
-  // Builds the cube out of 6 separate face planes so they can unfold into a net. Returns the
-  // faces so tap-to-highlight/double-tap-to-unfold can operate on them.
+  // Builds the cube out of 6 separate face planes so they can unfold into a net, plus a marker
+  // sphere at each of the 8 corners so students can tap to count vertices. Returns the faces
+  // (tap-to-highlight/double-tap-to-unfold) and vertex markers (tap-to-mark), and the group that
+  // holds the vertex markers so their visibility can be tied to the fold state.
   const buildCubeNet = () => {
     const texture = new THREE.TextureLoader().load(cubeTexture)
     const group = new THREE.Group()
@@ -75,7 +79,7 @@ export const initScenePipelineModule = () => {
         position: new THREE.Vector3(...netPos),
         quaternion: new THREE.Quaternion(),
       }
-      mesh.userData.highlightUntil = 0
+      mesh.userData.highlighted = false
 
       mesh.position.copy(mesh.userData.folded.position)
       mesh.quaternion.copy(mesh.userData.folded.quaternion)
@@ -84,7 +88,24 @@ export const initScenePipelineModule = () => {
       return mesh
     })
 
-    return {group, faces, groundOffset: 0.5}
+    const vertexGroup = new THREE.Group()
+    const vertexGeometry = new THREE.SphereGeometry(VERTEX_RADIUS, 12, 8)
+    const vertices = []
+    for (const x of [-0.5, 0.5]) {
+      for (const y of [-0.5, 0.5]) {
+        for (const z of [-0.5, 0.5]) {
+          const material = new THREE.MeshBasicMaterial({color: VERTEX_COLOR})
+          const marker = new THREE.Mesh(vertexGeometry, material)
+          marker.position.set(x, y, z)
+          marker.userData.highlighted = false
+          vertexGroup.add(marker)
+          vertices.push(marker)
+        }
+      }
+    }
+    group.add(vertexGroup)
+
+    return {group, faces, vertices, vertexGroup, groundOffset: 0.5}
   }
 
   // Builds a solid single-mesh shape (no net/fold, no per-face highlight), outlined with black
@@ -100,7 +121,7 @@ export const initScenePipelineModule = () => {
     group.rotation.y = rotationY
     group.add(mesh)
 
-    return {group, faces: [], groundOffset}
+    return {group, faces: [], vertices: [], vertexGroup: null, groundOffset}
   }
 
   const SHAPE_BUILDERS = {
@@ -115,6 +136,8 @@ export const initScenePipelineModule = () => {
   let currentShapeId = 'kubus'
   let shapeGroup
   let faces = []
+  let vertices = []
+  let vertexGroup = null
 
   let sceneRef = null
   let pendingShapeId = null
@@ -160,6 +183,8 @@ export const initScenePipelineModule = () => {
     shapeGroup = built.group
     shapeGroup.position.set(0, built.groundOffset, 0)
     faces = built.faces
+    vertices = built.vertices
+    vertexGroup = built.vertexGroup
 
     currentShapeId = shapeId
     isOpen = false
@@ -214,8 +239,13 @@ export const initScenePipelineModule = () => {
     animStartTime = performance.now()
   }
 
-  // Advances the fold/unfold animation and applies it to each face. Called once per frame.
+  // Advances the fold/unfold animation and applies it to each face. Called once per frame. The
+  // vertex markers only make sense on the fully-folded cube, so they're hidden any other time.
   const updateAnimation = () => {
+    if (vertexGroup) {
+      vertexGroup.visible = t === 0
+    }
+
     if (t === tTo) {
       return
     }
@@ -230,30 +260,27 @@ export const initScenePipelineModule = () => {
     })
   }
 
-  // Flashes a face's material to the highlight color, then fades it back to its own color.
-  const highlightFace = (mesh) => {
-    mesh.material.color.setHex(HIGHLIGHT_COLOR)
-    mesh.userData.highlightUntil = performance.now() + HIGHLIGHT_DURATION_MS
+  // Toggles a face's material between its base color and the highlight color. Stays until
+  // toggled again (or the shape is switched) — it does not fade out on its own, so a student can
+  // tap through every face to count them without the marks disappearing.
+  const toggleFaceHighlight = (mesh) => {
+    mesh.userData.highlighted = !mesh.userData.highlighted
+    mesh.material.color.setHex(mesh.userData.highlighted ? HIGHLIGHT_COLOR : PURPLE)
   }
 
-  // Fades any faces whose highlight has expired back to the cube's base color.
-  const updateHighlights = () => {
-    const now = performance.now()
-    faces.forEach((mesh) => {
-      if (mesh.userData.highlightUntil && now >= mesh.userData.highlightUntil) {
-        mesh.userData.highlightUntil = 0
-        mesh.material.color.setHex(PURPLE)
-      }
-    })
+  // Toggles a vertex marker between its base color and the highlight color, same as faces.
+  const toggleVertexHighlight = (mesh) => {
+    mesh.userData.highlighted = !mesh.userData.highlighted
+    mesh.material.color.setHex(mesh.userData.highlighted ? HIGHLIGHT_COLOR : VERTEX_COLOR)
   }
 
-  // Returns true if the tap hit a cube face. A single tap highlights the face temporarily,
-  // without answering whether it's the correct one for whatever aspect the student is
-  // exploring. A second tap on the same face within DOUBLE_TAP_WINDOW_MS toggles the
+  // Returns true if the tap hit a cube vertex marker or face. A single tap on a face toggles its
+  // highlight (to help count faces); a tap on a vertex marker toggles it the same way (to help
+  // count corners). A second tap on the same face within DOUBLE_TAP_WINDOW_MS toggles the
   // fold/unfold animation instead. No-op (returns false) for shapes other than the cube, since
-  // they have no individual face meshes.
+  // they have no individual face meshes or vertex markers.
   const handleCubeTap = (clientX, clientY, canvas, camera) => {
-    if (faces.length === 0) {
+    if (faces.length === 0 && vertices.length === 0) {
       return false
     }
 
@@ -262,6 +289,15 @@ export const initScenePipelineModule = () => {
     pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1
 
     raycaster.setFromCamera(pointer, camera)
+
+    if (vertexGroup && vertexGroup.visible) {
+      const vertexHit = raycaster.intersectObjects(vertices, false)[0]
+      if (vertexHit) {
+        toggleVertexHighlight(vertexHit.object)
+        return true
+      }
+    }
+
     const intersection = raycaster.intersectObjects(faces, false)[0]
     if (!intersection) {
       return false
@@ -275,7 +311,7 @@ export const initScenePipelineModule = () => {
       setOpen(!isOpen)
       lastTapFace = null
     } else {
-      highlightFace(face)
+      toggleFaceHighlight(face)
       lastTapFace = face
       lastTapTime = now
     }
@@ -388,10 +424,9 @@ export const initScenePipelineModule = () => {
     },
 
     // onUpdate is called once per camera frame, before rendering. Used to advance the
-    // fold/unfold animation and clear expired face highlights.
+    // fold/unfold animation and update vertex-marker visibility.
     onUpdate: () => {
       updateAnimation()
-      updateHighlights()
     },
 
     // Switches the displayed shape. Can be called before the scene has started (e.g. from a UI
