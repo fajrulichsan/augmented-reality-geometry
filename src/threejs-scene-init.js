@@ -27,7 +27,8 @@ const HIGHLIGHT_COLOR = 0xFFEB3B
 
 const PURPLE = 0xAD50FF
 const VERTEX_COLOR = 0xFFFFFF
-const VERTEX_RADIUS = 0.06
+const VERTEX_RADIUS = 0.09
+const VERTEX_SURFACE_OFFSET = 0.005
 const EDGE_RADIUS = 0.02
 const EDGE_MATERIAL = new THREE.MeshBasicMaterial({color: 0x000000})
 
@@ -88,15 +89,21 @@ export const initScenePipelineModule = () => {
       return mesh
     })
 
+    // Corner markers are flat discs pressed against the surface (angled outward along the
+    // corner's diagonal) rather than spheres, so they read as a small dot on the cube instead of
+    // a ball sticking out of it.
     const vertexGroup = new THREE.Group()
-    const vertexGeometry = new THREE.SphereGeometry(VERTEX_RADIUS, 12, 8)
+    const vertexGeometry = new THREE.CircleGeometry(VERTEX_RADIUS, 16)
+    const facingZ = new THREE.Vector3(0, 0, 1)
     const vertices = []
     for (const x of [-0.5, 0.5]) {
       for (const y of [-0.5, 0.5]) {
         for (const z of [-0.5, 0.5]) {
-          const material = new THREE.MeshBasicMaterial({color: VERTEX_COLOR})
+          const material = new THREE.MeshBasicMaterial({color: VERTEX_COLOR, side: THREE.DoubleSide})
           const marker = new THREE.Mesh(vertexGeometry, material)
-          marker.position.set(x, y, z)
+          const outward = new THREE.Vector3(x, y, z).normalize()
+          marker.position.set(x, y, z).addScaledVector(outward, VERTEX_SURFACE_OFFSET)
+          marker.quaternion.setFromUnitVectors(facingZ, outward)
           marker.userData.highlighted = false
           vertexGroup.add(marker)
           vertices.push(marker)
