@@ -59,11 +59,18 @@ export const initScenePipelineModule = () => {
     return {group, faces, groundOffset: 0.5}
   }
 
-  // Builds a solid single-mesh shape (no net/fold, no per-face highlight).
+  // Builds a solid single-mesh shape (no net/fold, no per-face highlight), outlined with black
+  // edge lines to match the cube's look.
   const buildSolid = (geometry, groundOffset, rotationY = 0) => {
     const material = new THREE.MeshStandardMaterial({color: PURPLE})
     const mesh = new THREE.Mesh(geometry, material)
     mesh.castShadow = true
+
+    const edges = new THREE.LineSegments(
+      new THREE.EdgesGeometry(geometry),
+      new THREE.LineBasicMaterial({color: 0x000000})
+    )
+    mesh.add(edges)
 
     const group = new THREE.Group()
     group.rotation.y = rotationY
