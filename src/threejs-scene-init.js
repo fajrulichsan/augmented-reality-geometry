@@ -26,8 +26,7 @@ const easeInOutQuad = (t) => (t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t)
 const HIGHLIGHT_COLOR = 0xFFEB3B
 
 const PURPLE = 0xAD50FF
-const VERTEX_COLOR = 0xFFFFFF
-const VERTEX_RADIUS = 0.09
+const VERTEX_SIZE = 0.14
 const VERTEX_SURFACE_OFFSET = 0.005
 const EDGE_RADIUS = 0.02
 const EDGE_MATERIAL = new THREE.MeshBasicMaterial({color: 0x000000})
@@ -59,10 +58,10 @@ const addThickEdges = (mesh, geometry) => {
 }
 
 export const initScenePipelineModule = () => {
-  // Builds the cube out of 6 separate face planes so they can unfold into a net, plus a marker
-  // sphere at each of the 8 corners so students can tap to count vertices. Returns the faces
-  // (tap-to-highlight/double-tap-to-unfold) and vertex markers (tap-to-mark), and the group that
-  // holds the vertex markers so their visibility can be tied to the fold state.
+  // Builds the cube out of 6 separate face planes so they can unfold into a net, plus a small
+  // square marker at each of the 8 corners (hidden until the cube is tapped) so students can see
+  // and count vertices. Returns the faces (tap-to-highlight/double-tap-to-unfold) and the group
+  // that holds the corner markers so their visibility can be revealed/tied to the fold state.
   const buildCubeNet = () => {
     const texture = new THREE.TextureLoader().load(cubeTexture)
     const group = new THREE.Group()
@@ -89,30 +88,31 @@ export const initScenePipelineModule = () => {
       return mesh
     })
 
-    // Corner markers are flat discs pressed against the surface (angled outward along the
-    // corner's diagonal) rather than spheres, so they read as a small dot on the cube instead of
-    // a ball sticking out of it.
+    // Corner markers are small yellow squares pressed flush against the surface (angled outward
+    // along each corner's diagonal, like a tiny flag planted at the corner) rather than free-
+    // floating spheres, so they read as part of the cube itself. They're children of the cube's
+    // own group, so they translate/rotate/scale together with it exactly like an AR marker
+    // anchored to the object, instead of a 2D overlay. Hidden by default; revealed once the cube
+    // is tapped.
     const vertexGroup = new THREE.Group()
-    const vertexGeometry = new THREE.CircleGeometry(VERTEX_RADIUS, 16)
+    vertexGroup.visible = false
+    const vertexGeometry = new THREE.PlaneGeometry(VERTEX_SIZE, VERTEX_SIZE)
+    const vertexMaterial = new THREE.MeshBasicMaterial({color: HIGHLIGHT_COLOR, side: THREE.DoubleSide})
     const facingZ = new THREE.Vector3(0, 0, 1)
-    const vertices = []
     for (const x of [-0.5, 0.5]) {
       for (const y of [-0.5, 0.5]) {
         for (const z of [-0.5, 0.5]) {
-          const material = new THREE.MeshBasicMaterial({color: VERTEX_COLOR, side: THREE.DoubleSide})
-          const marker = new THREE.Mesh(vertexGeometry, material)
+          const marker = new THREE.Mesh(vertexGeometry, vertexMaterial)
           const outward = new THREE.Vector3(x, y, z).normalize()
           marker.position.set(x, y, z).addScaledVector(outward, VERTEX_SURFACE_OFFSET)
           marker.quaternion.setFromUnitVectors(facingZ, outward)
-          marker.userData.highlighted = false
           vertexGroup.add(marker)
-          vertices.push(marker)
         }
       }
     }
     group.add(vertexGroup)
 
-    return {group, faces, vertices, vertexGroup, groundOffset: 0.5}
+    return {group, faces, vertexGroup, groundOffset: 0.5}
   }
 
   // Builds a solid single-mesh shape (no net/fold, no per-face highlight), outlined with black
@@ -128,7 +128,7 @@ export const initScenePipelineModule = () => {
     group.rotation.y = rotationY
     group.add(mesh)
 
-    return {group, faces: [], vertices: [], vertexGroup: null, groundOffset}
+    return {group, faces: [], vertexGroup: null, groundOffset}
   }
 
   const SHAPE_BUILDERS = {
@@ -143,8 +143,9 @@ export const initScenePipelineModule = () => {
   let currentShapeId = 'kubus'
   let shapeGroup
   let faces = []
-  let vertices = []
   let vertexGroup = null
+  // Corner markers stay hidden until the cube itself is tapped once.
+  let cornersRevealed = false
 
   let sceneRef = null
   let pendingShapeId = null
@@ -190,7 +191,6 @@ export const initScenePipelineModule = () => {
     shapeGroup = built.group
     shapeGroup.position.set(0, built.groundOffset, 0)
     faces = built.faces
-    vertices = built.vertices
     vertexGroup = built.vertexGroup
 
     currentShapeId = shapeId
@@ -199,6 +199,7 @@ export const initScenePipelineModule = () => {
     tFrom = 0
     tTo = 0
     lastTapFace = null
+    cornersRevealed = false
 
     sceneRef.add(shapeGroup)
   }
@@ -247,10 +248,11 @@ export const initScenePipelineModule = () => {
   }
 
   // Advances the fold/unfold animation and applies it to each face. Called once per frame. The
-  // vertex markers only make sense on the fully-folded cube, so they're hidden any other time.
+  // corner markers only make sense once revealed on the fully-folded cube, so they're hidden any
+  // other time.
   const updateAnimation = () => {
     if (vertexGroup) {
-      vertexGroup.visible = t === 0
+      vertexGroup.visible = cornersRevealed && t === 0
     }
 
     if (t === tTo) {
@@ -275,19 +277,13 @@ export const initScenePipelineModule = () => {
     mesh.material.color.setHex(mesh.userData.highlighted ? HIGHLIGHT_COLOR : PURPLE)
   }
 
-  // Toggles a vertex marker between its base color and the highlight color, same as faces.
-  const toggleVertexHighlight = (mesh) => {
-    mesh.userData.highlighted = !mesh.userData.highlighted
-    mesh.material.color.setHex(mesh.userData.highlighted ? HIGHLIGHT_COLOR : VERTEX_COLOR)
-  }
-
-  // Returns true if the tap hit a cube vertex marker or face. A single tap on a face toggles its
-  // highlight (to help count faces); a tap on a vertex marker toggles it the same way (to help
-  // count corners). A second tap on the same face within DOUBLE_TAP_WINDOW_MS toggles the
-  // fold/unfold animation instead. No-op (returns false) for shapes other than the cube, since
-  // they have no individual face meshes or vertex markers.
+  // Returns true if the tap hit a cube face. The first tap anywhere on the cube reveals the
+  // corner markers (they stay revealed after that); a single tap also toggles that face's
+  // highlight (to help count faces). A second tap on the same face within DOUBLE_TAP_WINDOW_MS
+  // toggles the fold/unfold animation instead. No-op (returns false) for shapes other than the
+  // cube, since they have no individual face meshes.
   const handleCubeTap = (clientX, clientY, canvas, camera) => {
-    if (faces.length === 0 && vertices.length === 0) {
+    if (faces.length === 0) {
       return false
     }
 
@@ -297,18 +293,12 @@ export const initScenePipelineModule = () => {
 
     raycaster.setFromCamera(pointer, camera)
 
-    if (vertexGroup && vertexGroup.visible) {
-      const vertexHit = raycaster.intersectObjects(vertices, false)[0]
-      if (vertexHit) {
-        toggleVertexHighlight(vertexHit.object)
-        return true
-      }
-    }
-
     const intersection = raycaster.intersectObjects(faces, false)[0]
     if (!intersection) {
       return false
     }
+
+    cornersRevealed = true
 
     const face = intersection.object
     const now = performance.now()
