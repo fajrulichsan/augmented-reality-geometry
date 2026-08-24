@@ -26,6 +26,34 @@ const HIGHLIGHT_COLOR = 0xFFEB3B
 const HIGHLIGHT_DURATION_MS = 1500
 
 const PURPLE = 0xAD50FF
+const EDGE_RADIUS = 0.02
+const EDGE_MATERIAL = new THREE.MeshBasicMaterial({color: 0x000000})
+
+// WebGL ignores LineBasicMaterial's linewidth, so a plain THREE.LineSegments edge outline always
+// renders hairline-thin regardless of setting. To get a visibly thick outline (matching the
+// baked-in border on the cube's texture), build the outline out of thin cylinders running along
+// each edge instead.
+const addThickEdges = (mesh, geometry) => {
+  const positions = new THREE.EdgesGeometry(geometry).attributes.position
+  const up = new THREE.Vector3(0, 1, 0)
+  const start = new THREE.Vector3()
+  const end = new THREE.Vector3()
+  const direction = new THREE.Vector3()
+  const midpoint = new THREE.Vector3()
+
+  for (let i = 0; i < positions.count; i += 2) {
+    start.fromBufferAttribute(positions, i)
+    end.fromBufferAttribute(positions, i + 1)
+    direction.subVectors(end, start)
+    const length = direction.length()
+
+    const edge = new THREE.Mesh(new THREE.CylinderGeometry(EDGE_RADIUS, EDGE_RADIUS, length, 6), EDGE_MATERIAL)
+    midpoint.addVectors(start, end).multiplyScalar(0.5)
+    edge.position.copy(midpoint)
+    edge.quaternion.setFromUnitVectors(up, direction.normalize())
+    mesh.add(edge)
+  }
+}
 
 export const initScenePipelineModule = () => {
   // Builds the cube out of 6 separate face planes so they can unfold into a net. Returns the
@@ -66,11 +94,7 @@ export const initScenePipelineModule = () => {
     const mesh = new THREE.Mesh(geometry, material)
     mesh.castShadow = true
 
-    const edges = new THREE.LineSegments(
-      new THREE.EdgesGeometry(geometry),
-      new THREE.LineBasicMaterial({color: 0x000000})
-    )
-    mesh.add(edges)
+    addThickEdges(mesh, geometry)
 
     const group = new THREE.Group()
     group.rotation.y = rotationY
