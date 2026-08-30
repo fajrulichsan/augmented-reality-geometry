@@ -27,10 +27,10 @@ const startAr = () => {
   XR8.run({canvas})
 }
 
-// Only materi 2 (Jaring-Jaring) has a working net so far, and only for the kubus. Other shapes
-// still show the "as is" 3D view (materi 1) until their nets are built.
+// Only materi 2 (Jaring-Jaring) has a working net so far, and only for kubus and balok. Other
+// shapes still show the "as is" 3D view (materi 1) until their nets are built.
 const NET_MATERI = '2'
-const NET_SHAPE = 'kubus'
+const NET_SHAPES = ['kubus', 'balok']
 
 const initShapePicker = () => {
   const toggle = document.getElementById('shape-toggle')
@@ -49,13 +49,13 @@ const initShapePicker = () => {
   const applyMateriState = () => {
     const isNetMateri = materiSelect.value === NET_MATERI
 
-    // Only the kubus net is built so far: lock the shape picker to kubus while in net mode.
+    // Only kubus and balok nets are built so far: lock the shape picker to those while in net mode.
     Array.from(shapeSelect.options).forEach((option) => {
-      option.disabled = isNetMateri && option.value !== NET_SHAPE
+      option.disabled = isNetMateri && !NET_SHAPES.includes(option.value)
     })
-    if (isNetMateri && shapeSelect.value !== NET_SHAPE) {
-      shapeSelect.value = NET_SHAPE
-      sceneModule.setShape(NET_SHAPE)
+    if (isNetMateri && !NET_SHAPES.includes(shapeSelect.value)) {
+      shapeSelect.value = NET_SHAPES[0]
+      sceneModule.setShape(NET_SHAPES[0])
     }
 
     netSliderWrap.classList.toggle('hidden', !isNetMateri)

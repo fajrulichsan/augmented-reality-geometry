@@ -1,9 +1,9 @@
 // Define an 8th Wall XR Camera Pipeline Module that adds a 3D shape to a threejs scene on
 // startup. The shape shown can be switched at runtime (kubus, balok, prisma segitiga, prisma
-// segilima, limas segitiga, limas segilima) via setShape(). Only the cube supports
-// tap-to-highlight-face and double-tap-to-unfold-net, since it's built from separate face planes;
-// other shapes are solid meshes. Tapping anywhere else recenters the scene. A one-finger drag
-// rotates the shape; a two-finger pinch scales it up or down.
+// segilima, limas segitiga, limas segilima) via setShape(). Only kubus and balok support
+// tap-to-highlight-face and double-tap-to-unfold-net, since they're built from separate face
+// planes; other shapes are solid meshes. Tapping anywhere else recenters the scene. A one-finger
+// drag rotates the shape; a two-finger pinch scales it up or down.
 import * as THREE from 'three';
 
 import cubeTexture from './assets/cube-texture.png'
@@ -18,6 +18,23 @@ const FACE_DEFS = [
   {foldedPos: [-0.5, 0, 0], foldedRot: [0, -Math.PI / 2, 0], netPos: [-1, 0, 0]},
   {foldedPos: [0.5, 0, 0], foldedRot: [0, Math.PI / 2, 0], netPos: [1, 0, 0]},
 ]
+
+// Builds the FACE_DEFS-equivalent for a box of arbitrary width (x) / height (y) / depth (z),
+// laid out as the classic "cross" net: left, front, right, back in a row, with top/bottom
+// attached above/below the front face. Unlike the cube (whose faces are all 1x1 squares), a
+// balok's faces come in three different rectangle sizes, so each face also carries its own
+// planeSize used to build its PlaneGeometry.
+const boxFaceDefs = (width, height, depth) => {
+  const rowOffset = width / 2 + depth / 2
+  return [
+    {planeSize: [width, height], foldedPos: [0, 0, depth / 2], foldedRot: [0, 0, 0], netPos: [0, 0, 0]},
+    {planeSize: [width, height], foldedPos: [0, 0, -depth / 2], foldedRot: [0, Math.PI, 0], netPos: [width + depth, 0, 0]},
+    {planeSize: [depth, height], foldedPos: [width / 2, 0, 0], foldedRot: [0, Math.PI / 2, 0], netPos: [rowOffset, 0, 0]},
+    {planeSize: [depth, height], foldedPos: [-width / 2, 0, 0], foldedRot: [0, -Math.PI / 2, 0], netPos: [-rowOffset, 0, 0]},
+    {planeSize: [width, depth], foldedPos: [0, height / 2, 0], foldedRot: [-Math.PI / 2, 0, 0], netPos: [0, height / 2 + depth / 2, 0]},
+    {planeSize: [width, depth], foldedPos: [0, -height / 2, 0], foldedRot: [Math.PI / 2, 0, 0], netPos: [0, -(height / 2 + depth / 2), 0]},
+  ]
+}
 
 const ANIM_DURATION_MS = 600
 const easeInOutQuad = (t) => (t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t)
@@ -55,15 +72,15 @@ const addThickEdges = (mesh, geometry) => {
 }
 
 export const initScenePipelineModule = () => {
-  // Builds the cube out of 6 separate face planes so they can unfold into a net. Returns the
-  // faces so tap-to-highlight/double-tap-to-unfold can operate on them.
-  const buildCubeNet = () => {
-    const texture = new THREE.TextureLoader().load(cubeTexture)
+  // Builds a box (cube or balok) out of 6 separate face planes so they can unfold into a net.
+  // Returns the faces so tap-to-highlight/double-tap-to-unfold can operate on them. `texture` is
+  // optional (only the cube has a labeled texture; the balok's faces are plain color).
+  const buildBoxNet = (faceDefs, groundOffset, texture) => {
     const group = new THREE.Group()
 
-    const faces = FACE_DEFS.map(({foldedPos, foldedRot, netPos}) => {
+    const faces = faceDefs.map(({planeSize, foldedPos, foldedRot, netPos}) => {
       const material = new THREE.MeshBasicMaterial({map: texture, color: PURPLE, side: THREE.DoubleSide})
-      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material)
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(...(planeSize || [1, 1])), material)
       mesh.castShadow = true
 
       mesh.userData.folded = {
@@ -83,8 +100,14 @@ export const initScenePipelineModule = () => {
       return mesh
     })
 
-    return {group, faces, groundOffset: 0.5}
+    return {group, faces, groundOffset}
   }
+
+  const buildCubeNet = () => (
+    buildBoxNet(FACE_DEFS, 0.5, new THREE.TextureLoader().load(cubeTexture))
+  )
+
+  const buildBalokNet = () => buildBoxNet(boxFaceDefs(1.4, 1, 0.8), 0.5)
 
   // Builds a solid single-mesh shape (no net/fold, no per-face highlight), outlined with black
   // edge lines to match the cube's look.
@@ -104,7 +127,7 @@ export const initScenePipelineModule = () => {
 
   const SHAPE_BUILDERS = {
     kubus: buildCubeNet,
-    balok: () => buildSolid(new THREE.BoxGeometry(1.4, 1, 0.8), 0.5),
+    balok: buildBalokNet,
     'prisma-segitiga': () => buildSolid(new THREE.CylinderGeometry(0.75, 0.75, 1, 3), 0.5, Math.PI / 6),
     'prisma-segilima': () => buildSolid(new THREE.CylinderGeometry(0.7, 0.7, 1, 5), 0.5, Math.PI / 2),
     'limas-segitiga': () => buildSolid(new THREE.ConeGeometry(0.8, 1.1, 3), 0.55, Math.PI / 6),
