@@ -126,6 +126,17 @@ export const initScenePipelineModule = () => {
   let tTo = 0
   let animStartTime = 0
 
+  // Net mode (materi "Jaring-Jaring"): a single tap opens/closes the net gradually instead of
+  // toggling face highlights, and the unfold amount can also be driven directly (e.g. by a
+  // slider) via setNetProgress. progressListeners are notified with the current 0-100 percentage
+  // whenever it changes, whether from the tap animation or setNetProgress.
+  let netMode = false
+  const progressListeners = []
+  const notifyProgress = () => {
+    const percent = Math.round(t * 100)
+    progressListeners.forEach((listener) => listener(percent))
+  }
+
   const raycaster = new THREE.Raycaster()
   const pointer = new THREE.Vector2()
 
@@ -213,6 +224,15 @@ export const initScenePipelineModule = () => {
     animStartTime = performance.now()
   }
 
+  // Applies a given fold/unfold amount (0 = folded, 1 = fully unfolded net) to each face.
+  const applyFacesAtT = (value) => {
+    faces.forEach((mesh) => {
+      const {folded, net} = mesh.userData
+      mesh.position.lerpVectors(folded.position, net.position, value)
+      mesh.quaternion.slerpQuaternions(folded.quaternion, net.quaternion, value)
+    })
+  }
+
   // Advances the fold/unfold animation and applies it to each face. Called once per frame.
   const updateAnimation = () => {
     if (t === tTo) {
@@ -222,11 +242,8 @@ export const initScenePipelineModule = () => {
     const progress = Math.min((performance.now() - animStartTime) / ANIM_DURATION_MS, 1)
     t = tFrom + (tTo - tFrom) * easeInOutQuad(progress)
 
-    faces.forEach((mesh) => {
-      const {folded, net} = mesh.userData
-      mesh.position.lerpVectors(folded.position, net.position, t)
-      mesh.quaternion.slerpQuaternions(folded.quaternion, net.quaternion, t)
-    })
+    applyFacesAtT(t)
+    notifyProgress()
   }
 
   // Toggles a face's material between its base color and the highlight color. Stays until
@@ -255,6 +272,11 @@ export const initScenePipelineModule = () => {
     const intersection = raycaster.intersectObjects(faces, false)[0]
     if (!intersection) {
       return false
+    }
+
+    if (netMode) {
+      setOpen(!isOpen)
+      return true
     }
 
     const face = intersection.object
@@ -394,6 +416,32 @@ export const initScenePipelineModule = () => {
         return
       }
       switchShape(shapeId)
+    },
+
+    // Enables/disables net mode (materi "Jaring-Jaring"): while enabled, a single tap opens or
+    // closes the net gradually instead of toggling face highlights.
+    setNetMode: (enabled) => {
+      netMode = enabled
+    },
+
+    // Directly sets the fold/unfold amount from a 0-100 percentage (e.g. a slider being dragged),
+    // bypassing the tap animation. No-op for shapes with no net (faces.length === 0).
+    setNetProgress: (percent) => {
+      if (faces.length === 0) {
+        return
+      }
+      const value = THREE.MathUtils.clamp(percent, 0, 100) / 100
+      t = value
+      tFrom = value
+      tTo = value
+      isOpen = value > 0
+      applyFacesAtT(t)
+    },
+
+    // Registers a listener called with the current unfold percentage (0-100) whenever it changes,
+    // so external UI (e.g. a slider) can stay in sync with tap-triggered animation.
+    onProgress: (listener) => {
+      progressListeners.push(listener)
     },
   }
 }
