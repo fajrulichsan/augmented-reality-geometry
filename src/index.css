@@ -58,4 +58,22 @@ body {
   border: 1px solid #AD50FF;
   background: #fff;
   color: #000;
+  max-width: 220px;
+}
+
+#shape-popup select + label {
+  margin-top: 12px;
+}
+
+#net-slider-wrap {
+  margin-top: 12px;
+}
+
+#net-slider-wrap.hidden {
+  display: none;
+}
+
+#net-slider {
+  width: 100%;
+  accent-color: #AD50FF;
 }
