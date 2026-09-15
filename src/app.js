@@ -27,10 +27,9 @@ const startAr = () => {
   XR8.run({canvas})
 }
 
-// Only materi 2 (Jaring-Jaring) has a working net so far, and only for kubus and balok. Other
-// shapes still show the "as is" 3D view (materi 1) until their nets are built.
+// Materi 2 (Jaring-Jaring) has a working net for every shape in the picker.
 const NET_MATERI = '2'
-const NET_SHAPES = ['kubus', 'balok']
+const NET_SHAPES = ['kubus', 'balok', 'prisma-segitiga', 'prisma-segilima', 'limas-segitiga', 'limas-segilima']
 
 const initShapePicker = () => {
   const toggle = document.getElementById('shape-toggle')
@@ -49,7 +48,7 @@ const initShapePicker = () => {
   const applyMateriState = () => {
     const isNetMateri = materiSelect.value === NET_MATERI
 
-    // Only kubus and balok nets are built so far: lock the shape picker to those while in net mode.
+    // Lock the shape picker to net-capable shapes while in net mode.
     Array.from(shapeSelect.options).forEach((option) => {
       option.disabled = isNetMateri && !NET_SHAPES.includes(option.value)
     })

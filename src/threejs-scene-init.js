@@ -1,9 +1,9 @@
 // Define an 8th Wall XR Camera Pipeline Module that adds a 3D shape to a threejs scene on
 // startup. The shape shown can be switched at runtime (kubus, balok, prisma segitiga, prisma
-// segilima, limas segitiga, limas segilima) via setShape(). Only kubus and balok support
-// tap-to-highlight-face and double-tap-to-unfold-net, since they're built from separate face
-// planes; other shapes are solid meshes. Tapping anywhere else recenters the scene. A one-finger
-// drag rotates the shape; a two-finger pinch scales it up or down.
+// segilima, limas segitiga, limas segilima) via setShape(). Every shape is built from separate
+// face meshes, so all of them support tap-to-highlight-face and double-tap-to-unfold-net. Tapping
+// anywhere else recenters the scene. A one-finger drag rotates the shape; a two-finger pinch
+// scales it up or down.
 import * as THREE from 'three';
 
 import cubeTexture from './assets/cube-texture.png'
@@ -36,40 +36,136 @@ const boxFaceDefs = (width, height, depth) => {
   ]
 }
 
+// Builds a THREE.Quaternion representing the rotation that maps local +x/+y/+z to the given
+// (orthonormal) world-space axes.
+const makeBasisQuaternion = (xAxis, yAxis, zAxis) => (
+  new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis))
+)
+
+// Builds a flat, triangulated geometry from a 2D outline, lying in the local xy-plane facing +z
+// (same convention as PlaneGeometry) - used for polygon net faces (triangles, pentagons...) that
+// aren't plain rectangles.
+const polygonGeometry = (points2D) => (
+  new THREE.ShapeGeometry(new THREE.Shape(points2D.map(([x, y]) => new THREE.Vector2(x, y))))
+)
+
+// Corners of a regular polygon with the given number of sides and circumradius, in the xz-plane.
+const regularPolygonPoints = (sides, radius) => (
+  Array.from({length: sides}, (_, i) => {
+    const theta = (i * 2 * Math.PI) / sides
+    return {x: radius * Math.cos(theta), z: radius * Math.sin(theta)}
+  })
+)
+
+// Builds the face defs (geometry + folded/net pose) for a right pyramid with a regular polygon
+// base: one base face plus one triangle per base edge, connecting it to the apex. Each triangle's
+// flat 2D shape is derived directly from its own 3D corners (any 3 points are always planar), so
+// it's an exact, distortion-free flattening - the same local geometry is reused for both the
+// folded pose and the net pose, only the placement/orientation differs.
+const pyramidFaceDefs = (sides, baseRadius, height) => {
+  const base = regularPolygonPoints(sides, baseRadius)
+  const baseFolded = base.map((p) => new THREE.Vector3(p.x, 0, p.z))
+  const baseNet = base.map((p) => new THREE.Vector3(p.x, p.z, 0))
+  const apexFolded = new THREE.Vector3(0, height, 0)
+
+  const faces = [{
+    geometry: polygonGeometry(baseNet.map((v) => [v.x, v.y])),
+    foldedPos: new THREE.Vector3(0, 0, 0),
+    foldedQuat: makeBasisQuaternion(
+      new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, -1, 0)
+    ),
+    netPos: new THREE.Vector3(0, 0, 0),
+    netQuat: new THREE.Quaternion(),
+  }]
+
+  for (let i = 0; i < sides; i++) {
+    const p0 = baseFolded[i]
+    const p1 = baseFolded[(i + 1) % sides]
+
+    const xAxis = new THREE.Vector3().subVectors(p1, p0).normalize()
+    const apexRel = new THREE.Vector3().subVectors(apexFolded, p0)
+    const yAxis = apexRel.clone().addScaledVector(xAxis, -apexRel.dot(xAxis)).normalize()
+    const zAxis = new THREE.Vector3().crossVectors(xAxis, yAxis).normalize()
+
+    const geometry = polygonGeometry([
+      [0, 0],
+      [p1.distanceTo(p0), 0],
+      [apexRel.dot(xAxis), apexRel.dot(yAxis)],
+    ])
+
+    const nb0 = baseNet[i]
+    const nb1 = baseNet[(i + 1) % sides]
+    const nxAxis = new THREE.Vector3().subVectors(nb1, nb0).normalize()
+    const nzAxis = new THREE.Vector3(0, 0, 1)
+    const nyAxis = new THREE.Vector3().crossVectors(nxAxis, nzAxis).normalize()
+
+    faces.push({
+      geometry,
+      foldedPos: p0,
+      foldedQuat: makeBasisQuaternion(xAxis, yAxis, zAxis),
+      netPos: nb0,
+      netQuat: makeBasisQuaternion(nxAxis, nyAxis, nzAxis),
+    })
+  }
+
+  return faces
+}
+
+// Builds the face defs for a right prism with a regular polygon base: two end caps plus one
+// rectangle per base edge. The rectangles are laid out in a row for the net (like the balok's
+// cross layout); the caps float above/below the row rather than hinging on a specific edge, to
+// keep the layout simple.
+const prismFaceDefs = (sides, baseRadius, height) => {
+  const base = regularPolygonPoints(sides, baseRadius)
+  const bottomFolded = base.map((p) => new THREE.Vector3(p.x, -height / 2, p.z))
+  const baseNet = base.map((p) => new THREE.Vector3(p.x, p.z, 0))
+  const edgeLength = bottomFolded[0].distanceTo(bottomFolded[1])
+  const stripWidth = sides * edgeLength
+
+  const capFace = (foldedY, netY, outwardY) => {
+    const xAxis = new THREE.Vector3(1, 0, 0)
+    const zAxis = new THREE.Vector3(0, outwardY, 0)
+    const yAxis = new THREE.Vector3().crossVectors(zAxis, xAxis).normalize()
+    return {
+      geometry: polygonGeometry(baseNet.map((v) => [v.x, v.y])),
+      foldedPos: new THREE.Vector3(0, foldedY, 0),
+      foldedQuat: makeBasisQuaternion(xAxis, yAxis, zAxis),
+      netPos: new THREE.Vector3(stripWidth / 2, netY, 0),
+      netQuat: new THREE.Quaternion(),
+    }
+  }
+
+  const faces = [
+    capFace(-height / 2, -(height / 2 + baseRadius), -1),
+    capFace(height / 2, height / 2 + baseRadius, 1),
+  ]
+
+  for (let i = 0; i < sides; i++) {
+    const b0 = bottomFolded[i]
+    const b1 = bottomFolded[(i + 1) % sides]
+
+    const xAxis = new THREE.Vector3().subVectors(b1, b0).normalize()
+    const yAxis = new THREE.Vector3(0, 1, 0)
+    const zAxis = new THREE.Vector3().crossVectors(yAxis, xAxis).normalize()
+
+    faces.push({
+      geometry: new THREE.PlaneGeometry(edgeLength, height),
+      foldedPos: new THREE.Vector3((b0.x + b1.x) / 2, 0, (b0.z + b1.z) / 2),
+      foldedQuat: makeBasisQuaternion(xAxis, yAxis, zAxis),
+      netPos: new THREE.Vector3(i * edgeLength + edgeLength / 2, 0, 0),
+      netQuat: new THREE.Quaternion(),
+    })
+  }
+
+  return faces
+}
+
 const ANIM_DURATION_MS = 600
 const easeInOutQuad = (t) => (t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t)
 
 const HIGHLIGHT_COLOR = 0xFFEB3B
 
 const PURPLE = 0xAD50FF
-const EDGE_RADIUS = 0.02
-const EDGE_MATERIAL = new THREE.MeshBasicMaterial({color: 0x000000})
-
-// WebGL ignores LineBasicMaterial's linewidth, so a plain THREE.LineSegments edge outline always
-// renders hairline-thin regardless of setting. To get a visibly thick outline (matching the
-// baked-in border on the cube's texture), build the outline out of thin cylinders running along
-// each edge instead.
-const addThickEdges = (mesh, geometry) => {
-  const positions = new THREE.EdgesGeometry(geometry).attributes.position
-  const up = new THREE.Vector3(0, 1, 0)
-  const start = new THREE.Vector3()
-  const end = new THREE.Vector3()
-  const direction = new THREE.Vector3()
-  const midpoint = new THREE.Vector3()
-
-  for (let i = 0; i < positions.count; i += 2) {
-    start.fromBufferAttribute(positions, i)
-    end.fromBufferAttribute(positions, i + 1)
-    direction.subVectors(end, start)
-    const length = direction.length()
-
-    const edge = new THREE.Mesh(new THREE.CylinderGeometry(EDGE_RADIUS, EDGE_RADIUS, length, 6), EDGE_MATERIAL)
-    midpoint.addVectors(start, end).multiplyScalar(0.5)
-    edge.position.copy(midpoint)
-    edge.quaternion.setFromUnitVectors(up, direction.normalize())
-    mesh.add(edge)
-  }
-}
 
 export const initScenePipelineModule = () => {
   // Builds a box (cube or balok) out of 6 separate face planes so they can unfold into a net.
@@ -109,29 +205,46 @@ export const initScenePipelineModule = () => {
 
   const buildBalokNet = () => buildBoxNet(boxFaceDefs(1.4, 1, 0.8), 0.5)
 
-  // Builds a solid single-mesh shape (no net/fold, no per-face highlight), outlined with black
-  // edge lines to match the cube's look.
-  const buildSolid = (geometry, groundOffset, rotationY = 0) => {
-    const material = new THREE.MeshStandardMaterial({color: PURPLE})
-    const mesh = new THREE.Mesh(geometry, material)
-    mesh.castShadow = true
-
-    addThickEdges(mesh, geometry)
-
+  // Builds a shape out of arbitrary per-face geometries (polygons, not just rectangles), each with
+  // its own folded pose and net pose already computed as position/quaternion. Used for prisms and
+  // pyramids, whose faces aren't all uniform planes like the box shapes above.
+  const buildFacesNet = (faceDefs, groundOffset) => {
     const group = new THREE.Group()
-    group.rotation.y = rotationY
-    group.add(mesh)
 
-    return {group, faces: [], groundOffset}
+    const faces = faceDefs.map(({geometry, foldedPos, foldedQuat, netPos, netQuat}) => {
+      const material = new THREE.MeshBasicMaterial({color: PURPLE, side: THREE.DoubleSide})
+      const mesh = new THREE.Mesh(geometry, material)
+      mesh.castShadow = true
+
+      mesh.userData.folded = {position: foldedPos.clone(), quaternion: foldedQuat.clone()}
+      mesh.userData.net = {position: netPos.clone(), quaternion: netQuat.clone()}
+      mesh.userData.highlighted = false
+
+      mesh.position.copy(mesh.userData.folded.position)
+      mesh.quaternion.copy(mesh.userData.folded.quaternion)
+
+      group.add(mesh)
+      return mesh
+    })
+
+    return {group, faces, groundOffset}
   }
+
+  const buildPyramidNet = (sides, baseRadius, height) => (
+    buildFacesNet(pyramidFaceDefs(sides, baseRadius, height), 0)
+  )
+
+  const buildPrismNet = (sides, baseRadius, height) => (
+    buildFacesNet(prismFaceDefs(sides, baseRadius, height), height / 2)
+  )
 
   const SHAPE_BUILDERS = {
     kubus: buildCubeNet,
     balok: buildBalokNet,
-    'prisma-segitiga': () => buildSolid(new THREE.CylinderGeometry(0.75, 0.75, 1, 3), 0.5, Math.PI / 6),
-    'prisma-segilima': () => buildSolid(new THREE.CylinderGeometry(0.7, 0.7, 1, 5), 0.5, Math.PI / 2),
-    'limas-segitiga': () => buildSolid(new THREE.ConeGeometry(0.8, 1.1, 3), 0.55, Math.PI / 6),
-    'limas-segilima': () => buildSolid(new THREE.ConeGeometry(0.8, 1.1, 5), 0.55, Math.PI / 2),
+    'prisma-segitiga': () => buildPrismNet(3, 0.75, 1),
+    'prisma-segilima': () => buildPrismNet(5, 0.7, 1),
+    'limas-segitiga': () => buildPyramidNet(3, 0.8, 1.1),
+    'limas-segilima': () => buildPyramidNet(5, 0.8, 1.1),
   }
 
   let currentShapeId = 'kubus'
@@ -142,7 +255,7 @@ export const initScenePipelineModule = () => {
   let pendingShapeId = null
 
   // Open animation state: t goes from 0 (folded) to 1 (fully unfolded net). Only meaningful for
-  // the cube.
+  // shapes with a net (faces.length > 0).
   let isOpen = false
   let t = 0
   let tFrom = 0
@@ -277,10 +390,9 @@ export const initScenePipelineModule = () => {
     mesh.material.color.setHex(mesh.userData.highlighted ? HIGHLIGHT_COLOR : PURPLE)
   }
 
-  // Returns true if the tap hit a cube face. A single tap toggles that face's highlight (to help
+  // Returns true if the tap hit a shape face. A single tap toggles that face's highlight (to help
   // count faces). A second tap on the same face within DOUBLE_TAP_WINDOW_MS toggles the
-  // fold/unfold animation instead. No-op (returns false) for shapes other than the cube, since
-  // they have no individual face meshes.
+  // fold/unfold animation instead. No-op (returns false) if the current shape has no net.
   const handleCubeTap = (clientX, clientY, canvas, camera) => {
     if (faces.length === 0) {
       return false
