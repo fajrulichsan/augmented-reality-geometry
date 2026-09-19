@@ -294,7 +294,7 @@ export const initScenePipelineModule = () => {
 
   // Removes the current shape from the scene (if any) and adds the requested one in its place.
   const switchShape = (shapeId) => {
-    if (!sceneRef || !SHAPE_BUILDERS[shapeId] || shapeId === currentShapeId) {
+    if (!sceneRef || !SHAPE_BUILDERS[shapeId] || (shapeGroup && shapeId === currentShapeId)) {
       return
     }
 
