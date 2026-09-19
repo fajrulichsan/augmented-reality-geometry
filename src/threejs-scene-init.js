@@ -7,6 +7,7 @@
 import * as THREE from 'three';
 
 import cubeTexture from './assets/cube-texture.png'
+import {buildHingedNetDefs, prismSolid, pyramidSolid} from './hinged-net'
 
 // Folded position/rotation match a unit BoxGeometry's faces. Net position/rotation lay the
 // faces out flat in a cross shape, all facing +z (same orientation as the front face).
@@ -36,129 +37,12 @@ const boxFaceDefs = (width, height, depth) => {
   ]
 }
 
-// Builds a THREE.Quaternion representing the rotation that maps local +x/+y/+z to the given
-// (orthonormal) world-space axes.
-const makeBasisQuaternion = (xAxis, yAxis, zAxis) => (
-  new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis))
-)
-
 // Builds a flat, triangulated geometry from a 2D outline, lying in the local xy-plane facing +z
 // (same convention as PlaneGeometry) - used for polygon net faces (triangles, pentagons...) that
 // aren't plain rectangles.
 const polygonGeometry = (points2D) => (
-  new THREE.ShapeGeometry(new THREE.Shape(points2D.map(([x, y]) => new THREE.Vector2(x, y))))
+  new THREE.ShapeGeometry(new THREE.Shape(points2D.map(({x, y}) => new THREE.Vector2(x, y))))
 )
-
-// Corners of a regular polygon with the given number of sides and circumradius, in the xz-plane.
-const regularPolygonPoints = (sides, radius) => (
-  Array.from({length: sides}, (_, i) => {
-    const theta = (i * 2 * Math.PI) / sides
-    return {x: radius * Math.cos(theta), z: radius * Math.sin(theta)}
-  })
-)
-
-// Builds the face defs (geometry + folded/net pose) for a right pyramid with a regular polygon
-// base: one base face plus one triangle per base edge, connecting it to the apex. Each triangle's
-// flat 2D shape is derived directly from its own 3D corners (any 3 points are always planar), so
-// it's an exact, distortion-free flattening - the same local geometry is reused for both the
-// folded pose and the net pose, only the placement/orientation differs.
-const pyramidFaceDefs = (sides, baseRadius, height) => {
-  const base = regularPolygonPoints(sides, baseRadius)
-  const baseFolded = base.map((p) => new THREE.Vector3(p.x, 0, p.z))
-  const baseNet = base.map((p) => new THREE.Vector3(p.x, p.z, 0))
-  const apexFolded = new THREE.Vector3(0, height, 0)
-
-  const faces = [{
-    geometry: polygonGeometry(baseNet.map((v) => [v.x, v.y])),
-    foldedPos: new THREE.Vector3(0, 0, 0),
-    foldedQuat: makeBasisQuaternion(
-      new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, -1, 0)
-    ),
-    netPos: new THREE.Vector3(0, 0, 0),
-    netQuat: new THREE.Quaternion(),
-  }]
-
-  for (let i = 0; i < sides; i++) {
-    const p0 = baseFolded[i]
-    const p1 = baseFolded[(i + 1) % sides]
-
-    const xAxis = new THREE.Vector3().subVectors(p1, p0).normalize()
-    const apexRel = new THREE.Vector3().subVectors(apexFolded, p0)
-    const yAxis = apexRel.clone().addScaledVector(xAxis, -apexRel.dot(xAxis)).normalize()
-    const zAxis = new THREE.Vector3().crossVectors(xAxis, yAxis).normalize()
-
-    const geometry = polygonGeometry([
-      [0, 0],
-      [p1.distanceTo(p0), 0],
-      [apexRel.dot(xAxis), apexRel.dot(yAxis)],
-    ])
-
-    const nb0 = baseNet[i]
-    const nb1 = baseNet[(i + 1) % sides]
-    const nxAxis = new THREE.Vector3().subVectors(nb1, nb0).normalize()
-    const nzAxis = new THREE.Vector3(0, 0, 1)
-    const nyAxis = new THREE.Vector3().crossVectors(nxAxis, nzAxis).normalize()
-
-    faces.push({
-      geometry,
-      foldedPos: p0,
-      foldedQuat: makeBasisQuaternion(xAxis, yAxis, zAxis),
-      netPos: nb0,
-      netQuat: makeBasisQuaternion(nxAxis, nyAxis, nzAxis),
-    })
-  }
-
-  return faces
-}
-
-// Builds the face defs for a right prism with a regular polygon base: two end caps plus one
-// rectangle per base edge. The rectangles are laid out in a row for the net (like the balok's
-// cross layout); the caps float above/below the row rather than hinging on a specific edge, to
-// keep the layout simple.
-const prismFaceDefs = (sides, baseRadius, height) => {
-  const base = regularPolygonPoints(sides, baseRadius)
-  const bottomFolded = base.map((p) => new THREE.Vector3(p.x, -height / 2, p.z))
-  const baseNet = base.map((p) => new THREE.Vector3(p.x, p.z, 0))
-  const edgeLength = bottomFolded[0].distanceTo(bottomFolded[1])
-  const stripWidth = sides * edgeLength
-
-  const capFace = (foldedY, netY, outwardY) => {
-    const xAxis = new THREE.Vector3(1, 0, 0)
-    const zAxis = new THREE.Vector3(0, outwardY, 0)
-    const yAxis = new THREE.Vector3().crossVectors(zAxis, xAxis).normalize()
-    return {
-      geometry: polygonGeometry(baseNet.map((v) => [v.x, v.y])),
-      foldedPos: new THREE.Vector3(0, foldedY, 0),
-      foldedQuat: makeBasisQuaternion(xAxis, yAxis, zAxis),
-      netPos: new THREE.Vector3(stripWidth / 2, netY, 0),
-      netQuat: new THREE.Quaternion(),
-    }
-  }
-
-  const faces = [
-    capFace(-height / 2, -(height / 2 + baseRadius), -1),
-    capFace(height / 2, height / 2 + baseRadius, 1),
-  ]
-
-  for (let i = 0; i < sides; i++) {
-    const b0 = bottomFolded[i]
-    const b1 = bottomFolded[(i + 1) % sides]
-
-    const xAxis = new THREE.Vector3().subVectors(b1, b0).normalize()
-    const yAxis = new THREE.Vector3(0, 1, 0)
-    const zAxis = new THREE.Vector3().crossVectors(yAxis, xAxis).normalize()
-
-    faces.push({
-      geometry: new THREE.PlaneGeometry(edgeLength, height),
-      foldedPos: new THREE.Vector3((b0.x + b1.x) / 2, 0, (b0.z + b1.z) / 2),
-      foldedQuat: makeBasisQuaternion(xAxis, yAxis, zAxis),
-      netPos: new THREE.Vector3(i * edgeLength + edgeLength / 2, 0, 0),
-      netQuat: new THREE.Quaternion(),
-    })
-  }
-
-  return faces
-}
 
 const ANIM_DURATION_MS = 600
 const easeInOutQuad = (t) => (t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t)
@@ -205,37 +89,62 @@ export const initScenePipelineModule = () => {
 
   const buildBalokNet = () => buildBoxNet(boxFaceDefs(1.4, 1, 0.8), 0.5)
 
-  // Builds a shape out of arbitrary per-face geometries (polygons, not just rectangles), each with
-  // its own folded pose and net pose already computed as position/quaternion. Used for prisms and
-  // pyramids, whose faces aren't all uniform planes like the box shapes above.
-  const buildFacesNet = (faceDefs, groundOffset) => {
+  // Builds a prism/pyramid whose faces hinge on shared edges: unfolding rotates each face about
+  // its hinge (relative to its parent face), so the net stays connected the whole way. The
+  // returned applyPose(value) places every face for a fold amount (0 = solid, 1 = flat net); the
+  // whole net also stands up to face the viewer (like the cube's) as it opens.
+  const buildHingedShape = ({vertices, faceDefs}) => {
+    const {faces: defs, rootOrigin, rootQuat, netCenter} = buildHingedNetDefs(vertices, faceDefs)
     const group = new THREE.Group()
+    const content = new THREE.Group()
+    group.add(content)
 
-    const faces = faceDefs.map(({geometry, foldedPos, foldedQuat, netPos, netQuat}) => {
-      const material = new THREE.MeshBasicMaterial({color: PURPLE, side: THREE.DoubleSide})
-      const mesh = new THREE.Mesh(geometry, material)
+    const faces = defs.map((def) => {
+      const geometry = polygonGeometry(def.verts.map((id) => def.points2.get(id)))
+      const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({color: PURPLE, side: THREE.DoubleSide}))
       mesh.castShadow = true
-
-      mesh.userData.folded = {position: foldedPos.clone(), quaternion: foldedQuat.clone()}
-      mesh.userData.net = {position: netPos.clone(), quaternion: netQuat.clone()}
       mesh.userData.highlighted = false
-
-      mesh.position.copy(mesh.userData.folded.position)
-      mesh.quaternion.copy(mesh.userData.folded.quaternion)
-
-      group.add(mesh)
+      content.add(mesh)
       return mesh
     })
 
-    return {group, faces, groundOffset}
+    const netOffset = new THREE.Vector3(-netCenter.x, -netCenter.y, 0)
+    const identity = new THREE.Quaternion()
+    const matrices = defs.map(() => new THREE.Matrix4())
+    const hingeRotation = new THREE.Matrix4()
+    const toHinge = new THREE.Matrix4()
+    const fromHinge = new THREE.Matrix4()
+
+    const applyPose = (value) => {
+      defs.forEach((def, i) => {
+        if (def.parent < 0) {
+          matrices[i].identity()
+        } else {
+          const {hingeOrigin, hingeAxis, foldAngle} = def
+          hingeRotation.makeRotationAxis(hingeAxis, foldAngle * (1 - value))
+          toHinge.makeTranslation(hingeOrigin.x, hingeOrigin.y, 0)
+          fromHinge.makeTranslation(-hingeOrigin.x, -hingeOrigin.y, 0)
+          matrices[i].copy(matrices[def.parent]).multiply(toHinge).multiply(hingeRotation).multiply(fromHinge)
+        }
+        const mesh = faces[i]
+        matrices[i].decompose(mesh.position, mesh.quaternion, mesh.scale)
+      })
+      content.quaternion.slerpQuaternions(rootQuat, identity, value)
+      content.position.lerpVectors(rootOrigin, netOffset, value)
+    }
+
+    applyPose(0)
+    // Solids are centered on the origin, so half their height rests them on the ground.
+    const groundOffset = Math.max(...vertices.map((v) => Math.abs(v.y)))
+    return {group, faces, groundOffset, applyPose}
   }
 
   const buildPyramidNet = (sides, baseRadius, height) => (
-    buildFacesNet(pyramidFaceDefs(sides, baseRadius, height), 0)
+    buildHingedShape(pyramidSolid(sides, baseRadius, height))
   )
 
   const buildPrismNet = (sides, baseRadius, height) => (
-    buildFacesNet(prismFaceDefs(sides, baseRadius, height), height / 2)
+    buildHingedShape(prismSolid(sides, baseRadius, height))
   )
 
   const SHAPE_BUILDERS = {
@@ -250,6 +159,7 @@ export const initScenePipelineModule = () => {
   let currentShapeId = 'kubus'
   let shapeGroup
   let faces = []
+  let applyPose = null
 
   let sceneRef = null
   let pendingShapeId = null
@@ -306,6 +216,7 @@ export const initScenePipelineModule = () => {
     shapeGroup = built.group
     shapeGroup.position.set(0, built.groundOffset, 0)
     faces = built.faces
+    applyPose = built.applyPose || null
 
     currentShapeId = shapeId
     isOpen = false
@@ -362,6 +273,10 @@ export const initScenePipelineModule = () => {
 
   // Applies a given fold/unfold amount (0 = folded, 1 = fully unfolded net) to each face.
   const applyFacesAtT = (value) => {
+    if (applyPose) {
+      applyPose(value)
+      return
+    }
     faces.forEach((mesh) => {
       const {folded, net} = mesh.userData
       mesh.position.lerpVectors(folded.position, net.position, value)
