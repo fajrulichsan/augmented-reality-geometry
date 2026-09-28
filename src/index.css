@@ -92,6 +92,10 @@ body {
   display: none;
 }
 
+#materi-2-root.hidden {
+  display: none;
+}
+
 #net-slider {
   width: 100%;
   accent-color: #AD50FF;

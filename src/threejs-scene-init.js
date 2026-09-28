@@ -242,6 +242,15 @@ export const initScenePipelineModule = () => {
     progressListeners.forEach((listener) => listener(percent))
   }
 
+  // Notified with the current number of highlighted faces whenever a face's highlight is toggled
+  // by a tap (aspectTarget === 'sisi', non-netMode path) - used by materi 2's guided flow to
+  // gate its "pilih dua sisi" / "pilih satu sisi" steps.
+  const faceHighlightListeners = []
+  const notifyFaceHighlight = () => {
+    const count = faces.filter((mesh) => mesh.userData.highlighted).length
+    faceHighlightListeners.forEach((listener) => listener(count))
+  }
+
   const raycaster = new THREE.Raycaster()
   const pointer = new THREE.Vector2()
 
@@ -414,6 +423,9 @@ export const initScenePipelineModule = () => {
 
     if (!netMode) {
       toggleMarkHighlight(mesh, aspectTarget === 'sisi')
+      if (aspectTarget === 'sisi') {
+        notifyFaceHighlight()
+      }
       return true
     }
 
@@ -609,5 +621,14 @@ export const initScenePipelineModule = () => {
     onProgress: (listener) => {
       progressListeners.push(listener)
     },
+
+    // Registers a listener called with the current number of highlighted faces whenever it
+    // changes (materi 2's "pilih dua sisi" / "pilih satu sisi" steps).
+    onFaceHighlightChange: (listener) => {
+      faceHighlightListeners.push(listener)
+    },
+
+    // How many faces the current shape has (0 for shapes with no net support).
+    getFaceCount: () => faces.length,
   }
 }

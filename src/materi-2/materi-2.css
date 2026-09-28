@@ -1,0 +1,96 @@
+/* Materi 2 guided flow (screens injected by ./index.js into #materi-2-root). Shares the
+   .screen/.btn-primary/.btn-secondary/.btn-bangun/.grid-buttons/.aspek-list look from materi 1
+   (see ../materi-1/materi-1.css) so both materis read as one product; this file only adds the
+   fold-bar, which materi 1 has no equivalent of. */
+@import '../materi-1/materi-1.css';
+
+#fold-bar-m2 {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 25;
+  font-family: sans-serif;
+  color: #fff;
+  box-sizing: border-box;
+  background: rgba(20, 20, 20, 0.92);
+}
+
+#fold-bar-m2.hidden {
+  display: none;
+}
+
+#fold-status-m2 {
+  padding: 8px 16px 0;
+  font-size: 13px;
+  color: #AD50FF;
+  font-weight: 600;
+}
+
+#fold-status-m2.hidden {
+  display: none;
+}
+
+#fold-prompt-m2 {
+  padding: 12px 16px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+#fold-hint-m2 {
+  padding: 0 16px 12px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #ddd;
+}
+
+#fold-hint-m2.hidden {
+  display: none;
+}
+
+#fold-controls-m2.hidden {
+  display: none;
+}
+
+.fold-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  font-size: 12px;
+}
+
+.fold-slider-row input[type="range"] {
+  flex: 1;
+  accent-color: #AD50FF;
+}
+
+.fold-transport {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px 0;
+}
+
+.fold-transport button {
+  flex: 1;
+  margin-bottom: 0;
+  font-size: 13px;
+  padding: 10px 6px;
+}
+
+.fold-actions {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px 16px;
+}
+
+.fold-actions button {
+  flex: 1;
+  margin-bottom: 0;
+  font-size: 13px;
+  padding: 10px 8px;
+}
+
+.fold-actions button.hidden {
+  display: none;
+}

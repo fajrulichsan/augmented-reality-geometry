@@ -2,13 +2,21 @@
 
 import {initScenePipelineModule} from './threejs-scene-init'
 import {initMateri1} from './materi-1'
+import {initMateri2} from './materi-2'
 import * as THREE from 'three';
 
 window.THREE = THREE
 
 const sceneModule = initScenePipelineModule()
 
+// Both guided flows can call this (each has its own "Mulai AR" button), but the camera/XR
+// session must only be started once.
+let arRunning = false
 const startAr = () => {
+  if (arRunning) {
+    return
+  }
+  arRunning = true
   XR8.addCameraPipelineModules([  // Add camera pipeline modules.
     // Existing pipeline modules.
     XR8.GlTextureRenderer.pipelineModule(),      // Draws the camera feed.
@@ -46,6 +54,9 @@ const initShapePicker = () => {
     toggle.setAttribute('aria-expanded', String(!isHidden))
   })
 
+  const materi1Root = document.getElementById('materi-1-root')
+  const materi2Root = document.getElementById('materi-2-root')
+
   const applyMateriState = () => {
     const isNetMateri = materiSelect.value === NET_MATERI
 
@@ -60,6 +71,11 @@ const initShapePicker = () => {
 
     netSliderWrap.classList.toggle('hidden', !isNetMateri)
     sceneModule.setNetMode(isNetMateri)
+
+    // The dev shape-popup only drives the raw scene; the guided-flow overlay shown underneath
+    // it switches too, so the popup's materi choice always matches what's on screen.
+    materi1Root.classList.toggle('hidden', isNetMateri)
+    materi2Root.classList.toggle('hidden', !isNetMateri)
   }
 
   materiSelect.addEventListener('change', applyMateriState)
@@ -83,6 +99,7 @@ const initShapePicker = () => {
 const onxrloaded = () => {
   initShapePicker()
   initMateri1(sceneModule, {startAr})
+  initMateri2(sceneModule, {startAr})
 }
 
 window.XR8 ? onxrloaded() : window.addEventListener('xrloaded', onxrloaded)
