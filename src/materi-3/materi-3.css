@@ -1,0 +1,106 @@
+/* Materi 3 guided flow (screens injected by ./index.js into #materi-3-root). Shares the
+   .screen/.btn-primary/.btn-secondary/.btn-bangun/.grid-buttons/.aspek-list look from materi 1
+   (see ../materi-1/materi-1.css) so all materis read as one product; this file only adds the
+   eksplorasi bar's own sections (status/hint/measure-list/trailer), which materi 1 has no
+   equivalent of. */
+@import '../materi-1/materi-1.css';
+
+#eksplorasi-bar-m3 {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 25;
+  font-family: sans-serif;
+  color: #fff;
+  box-sizing: border-box;
+  background: rgba(20, 20, 20, 0.92);
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+#eksplorasi-bar-m3.hidden {
+  display: none;
+}
+
+#m3-status {
+  padding: 8px 16px 0;
+  font-size: 13px;
+  color: #AD50FF;
+  font-weight: 600;
+}
+
+#m3-status.hidden {
+  display: none;
+}
+
+#m3-prompt {
+  padding: 12px 16px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+#m3-hint {
+  padding: 0 16px 12px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #ddd;
+}
+
+#m3-hint.hidden {
+  display: none;
+}
+
+#m3-measure-list {
+  margin: 0 16px 12px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+#m3-measure-list.hidden {
+  display: none;
+}
+
+#m3-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 16px 10px;
+}
+
+#m3-actions button {
+  flex: 1 1 45%;
+  margin-bottom: 0;
+  font-size: 13px;
+  padding: 10px 8px;
+}
+
+#m3-actions button.hidden {
+  display: none;
+}
+
+#m3-trailer {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+#m3-trailer button {
+  flex: 1;
+  margin-bottom: 0;
+  font-size: 12px;
+  padding: 10px 6px;
+}
+
+#m3-bandingkan-list p {
+  text-align: left;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 0 0 10px;
+  font-size: 14px;
+}

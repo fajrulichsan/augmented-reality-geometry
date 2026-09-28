@@ -3,6 +3,7 @@
 import {initScenePipelineModule} from './threejs-scene-init'
 import {initMateri1} from './materi-1'
 import {initMateri2} from './materi-2'
+import {initMateri3} from './materi-3'
 import * as THREE from 'three';
 
 window.THREE = THREE
@@ -40,6 +41,10 @@ const startAr = () => {
 const NET_MATERI = '2'
 const NET_SHAPES = ['kubus', 'balok', 'prisma-3', 'prisma-5', 'limas-3', 'limas-5']
 
+// Materi 3 (Luas Permukaan) only covers kubus/balok/prisma (PRD-materi-3.md section 1 scope; no
+// limas), same as materi 1's solid (non-net) rendering mode.
+const MATERI_3 = '3'
+
 const initShapePicker = () => {
   const toggle = document.getElementById('shape-toggle')
   const popup = document.getElementById('shape-popup')
@@ -56,9 +61,11 @@ const initShapePicker = () => {
 
   const materi1Root = document.getElementById('materi-1-root')
   const materi2Root = document.getElementById('materi-2-root')
+  const materi3Root = document.getElementById('materi-3-root')
 
   const applyMateriState = () => {
     const isNetMateri = materiSelect.value === NET_MATERI
+    const isMateri3 = materiSelect.value === MATERI_3
 
     // Lock the shape picker to net-capable shapes while in net mode.
     Array.from(shapeSelect.options).forEach((option) => {
@@ -74,8 +81,9 @@ const initShapePicker = () => {
 
     // The dev shape-popup only drives the raw scene; the guided-flow overlay shown underneath
     // it switches too, so the popup's materi choice always matches what's on screen.
-    materi1Root.classList.toggle('hidden', isNetMateri)
+    materi1Root.classList.toggle('hidden', isNetMateri || isMateri3)
     materi2Root.classList.toggle('hidden', !isNetMateri)
+    materi3Root.classList.toggle('hidden', !isMateri3)
   }
 
   materiSelect.addEventListener('change', applyMateriState)
@@ -100,6 +108,7 @@ const onxrloaded = () => {
   initShapePicker()
   initMateri1(sceneModule, {startAr})
   initMateri2(sceneModule, {startAr})
+  initMateri3(sceneModule, {startAr})
 }
 
 window.XR8 ? onxrloaded() : window.addEventListener('xrloaded', onxrloaded)

@@ -51,8 +51,65 @@ const HIGHLIGHT_COLOR = 0xFFEB3B
 
 const PURPLE = 0xAD50FF
 
+// Materi 3's up-to-2-face selection uses two distinct colors (one per slot) instead of the single
+// toggle-highlight color the other materis use.
+const SELECT_COLOR_A = 0x4FC3F7
+const SELECT_COLOR_B = 0xFF7043
+
 const VERTEX_RADIUS = 0.04
 const EDGE_RADIUS = 0.02
+
+// Fixed scale for materi 3's cm measurements: 1 scene unit = 25 cm. Lengths are derived once from
+// each face's own local (unscaled) geometry, so pinch-zoom (which only scales `shapeGroup`) never
+// changes a reported value - see attachFaceMeasureTools() and AC-7 in PRD-materi-3.md.
+const CM_PER_UNIT = 25
+
+// Builds tap targets for a face's rusuk (edges) plus, for a triangular face, a height line from one
+// vertex to the midpoint of the opposite side (materi 3's "Ukur" / "Ukur Tinggi Sisi", AC-5).
+// `corners` are the face's own polygon corners, in order, in the mesh's local (flat) coordinate
+// space - the markers are added as children of `mesh` so they inherit its exact pose (and any
+// pinch-scale) automatically, without needing to duplicate the shape's global vertex bookkeeping.
+const attachFaceMeasureTools = (mesh, corners) => {
+  const sides = corners.length
+  mesh.userData.sides = sides
+
+  mesh.userData.edgeMarkers = corners.map((a, i) => {
+    const b = corners[(i + 1) % sides]
+    const dir = new THREE.Vector3().subVectors(b, a)
+    const length = dir.length()
+    const marker = new THREE.Mesh(
+      new THREE.CylinderGeometry(EDGE_RADIUS, EDGE_RADIUS, length, 8),
+      new THREE.MeshBasicMaterial({color: PURPLE})
+    )
+    marker.position.copy(a).addScaledVector(dir, 0.5)
+    marker.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize())
+    marker.userData.highlighted = false
+    marker.userData.edgeIndex = i
+    marker.userData.lengthCm = Math.round(length * CM_PER_UNIT * 10) / 10
+    marker.visible = false
+    mesh.add(marker)
+    return {mesh: marker, lengthCm: marker.userData.lengthCm}
+  })
+
+  // Only a triangular face (a prism's triangular cap, in this app) gets a height line: apex =
+  // corners[2], base = corners[0]-corners[1]. Since prism caps are regular polygons, for sides = 3
+  // that's an equilateral triangle, where the median from a vertex to the opposite side's midpoint
+  // coincides with the true (perpendicular) altitude.
+  if (sides === 3) {
+    const apex = corners[2]
+    const mid = corners[0].clone().add(corners[1]).multiplyScalar(0.5)
+    const lengthCm = Math.round(apex.distanceTo(mid) * CM_PER_UNIT * 10) / 10
+    const line = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([apex, mid]),
+      new THREE.LineBasicMaterial({color: HIGHLIGHT_COLOR})
+    )
+    line.visible = false
+    mesh.add(line)
+    mesh.userData.heightLine = {line, lengthCm}
+  } else {
+    mesh.userData.heightLine = null
+  }
+}
 
 // Builds a vertex sphere and an edge cylinder, invisible by default - they exist purely as tap
 // targets for the "titik sudut"/"rusuk" aspects, and only become visible (as a temporary mark)
@@ -101,7 +158,8 @@ export const initScenePipelineModule = () => {
 
     const faces = faceDefs.map(({planeSize, foldedPos, foldedRot, netPos}) => {
       const material = new THREE.MeshBasicMaterial({map: texture, color: PURPLE, side: THREE.DoubleSide})
-      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(...(planeSize || [1, 1])), material)
+      const [w, h] = planeSize || [1, 1]
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), material)
       mesh.castShadow = true
 
       mesh.userData.folded = {
@@ -116,6 +174,13 @@ export const initScenePipelineModule = () => {
 
       mesh.position.copy(mesh.userData.folded.position)
       mesh.quaternion.copy(mesh.userData.folded.quaternion)
+
+      attachFaceMeasureTools(mesh, [
+        new THREE.Vector3(-w / 2, -h / 2, 0),
+        new THREE.Vector3(w / 2, -h / 2, 0),
+        new THREE.Vector3(w / 2, h / 2, 0),
+        new THREE.Vector3(-w / 2, h / 2, 0),
+      ])
 
       group.add(mesh)
       return mesh
@@ -144,10 +209,15 @@ export const initScenePipelineModule = () => {
     group.add(content)
 
     const faces = defs.map((def) => {
-      const geometry = polygonGeometry(def.verts.map((id) => def.points2.get(id)))
+      const corners = def.verts.map((id) => {
+        const p2 = def.points2.get(id)
+        return new THREE.Vector3(p2.x, p2.y, 0)
+      })
+      const geometry = polygonGeometry(corners)
       const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({color: PURPLE, side: THREE.DoubleSide}))
       mesh.castShadow = true
       mesh.userData.highlighted = false
+      attachFaceMeasureTools(mesh, corners)
       content.add(mesh)
       return mesh
     })
@@ -251,6 +321,24 @@ export const initScenePipelineModule = () => {
     faceHighlightListeners.forEach((listener) => listener(count))
   }
 
+  // Materi 3: notified with a face's index whenever it's tapped while aspectTarget === 'sisi-select'
+  // (used for its per-face aspects, which manage selection/coloring themselves via setFaceSelection
+  // instead of the simple toggle-highlight the other materis use).
+  const faceTapListeners = []
+  const notifyFaceTap = (index) => {
+    faceTapListeners.forEach((listener) => listener(index))
+  }
+
+  // Materi 3: rusuk-measuring mode, scoped to one face at a time (FR-5 "Ukur"). While active, taps
+  // only hit that face's own edgeMarkers (see attachFaceMeasureTools), instead of the normal
+  // aspectTarget-driven pickable set.
+  let measureMode = false
+  let activeMeasureFace = null
+  const edgeMeasureListeners = []
+  const notifyEdgeMeasure = (edgeIndex, lengthCm) => {
+    edgeMeasureListeners.forEach((listener) => listener({edgeIndex, lengthCm}))
+  }
+
   const raycaster = new THREE.Raycaster()
   const pointer = new THREE.Vector2()
 
@@ -294,6 +382,14 @@ export const initScenePipelineModule = () => {
     tFrom = 0
     tTo = 0
     lastTapFace = null
+    measureMode = false
+    activeMeasureFace = null
+
+    // Materi 3: stable per-session face IDs ("Sisi A", "Sisi B", ...) - assigned once here so they
+    // stay consistent for as long as this shape is on screen.
+    faces.forEach((mesh, i) => {
+      mesh.userData.label = String.fromCharCode(65 + (i % 26))
+    })
 
     sceneRef.add(shapeGroup)
   }
@@ -388,6 +484,9 @@ export const initScenePipelineModule = () => {
     if (netMode) {
       return faces
     }
+    if (measureMode) {
+      return activeMeasureFace ? activeMeasureFace.userData.edgeMarkers.map(({mesh}) => mesh) : []
+    }
     if (aspectTarget === 'rusuk') {
       return edgeMeshes
     }
@@ -421,7 +520,20 @@ export const initScenePipelineModule = () => {
 
     const mesh = intersection.object
 
+    if (measureMode) {
+      // Rusuk tap (FR-5 "Ukur"): mark it as measured and report its fixed cm length.
+      toggleMarkHighlight(mesh, true)
+      notifyEdgeMeasure(mesh.userData.edgeIndex, mesh.userData.lengthCm)
+      return true
+    }
+
     if (!netMode) {
+      if (aspectTarget === 'sisi-select') {
+        // Materi 3's per-face aspects: report the tap, let the guided flow manage up-to-2-face
+        // selection/coloring itself via setFaceSelection.
+        notifyFaceTap(faces.indexOf(mesh))
+        return true
+      }
       toggleMarkHighlight(mesh, aspectTarget === 'sisi')
       if (aspectTarget === 'sisi') {
         notifyFaceHighlight()
@@ -585,12 +697,22 @@ export const initScenePipelineModule = () => {
       faces.forEach((mesh) => {
         mesh.userData.highlighted = false
         mesh.material.color.setHex(PURPLE)
+        ;(mesh.userData.edgeMarkers || []).forEach(({mesh: em}) => {
+          em.visible = false
+          em.userData.highlighted = false
+          em.material.color.setHex(PURPLE)
+        })
+        if (mesh.userData.heightLine) {
+          mesh.userData.heightLine.line.visible = false
+        }
       })
       ;[...edgeMeshes, ...vertexMeshes].forEach((mesh) => {
         mesh.userData.highlighted = false
         mesh.material.color.setHex(PURPLE)
         mesh.visible = false
       })
+      measureMode = false
+      activeMeasureFace = null
     },
 
     // Toggles a see-through material on the faces (F7 "Transparansi Model") so rusuk/titik sudut
@@ -630,5 +752,68 @@ export const initScenePipelineModule = () => {
 
     // How many faces the current shape has (0 for shapes with no net support).
     getFaceCount: () => faces.length,
+
+    // --- Materi 3 additions (PRD-materi-3.md) ---
+
+    // Stable per-session face info: [{index, label ('A', 'B', ...), sides}, ...] in tap order.
+    getFaces: () => faces.map((mesh, i) => ({index: i, label: mesh.userData.label, sides: mesh.userData.sides})),
+
+    // Colors up to 2 faces with distinct per-slot colors (indices[0] gets slot A's color,
+    // indices[1] slot B's); every other face reverts to the default color. Pass [] to clear.
+    setFaceSelection: (indices) => {
+      faces.forEach((mesh, i) => {
+        const slot = indices.indexOf(i)
+        mesh.material.color.setHex(slot === 0 ? SELECT_COLOR_A : slot === 1 ? SELECT_COLOR_B : PURPLE)
+      })
+    },
+
+    // Registers a listener called with a face's index whenever it's tapped while
+    // setAspectTarget('sisi-select') is active.
+    onFaceTap: (listener) => {
+      faceTapListeners.push(listener)
+    },
+
+    // Enables (faceIndex) / disables (null) rusuk-measuring mode scoped to one face: taps then only
+    // hit that face's own rusuk markers. Independent of aspectTarget/netMode.
+    setMeasureFace: (faceIndex) => {
+      faces.forEach((mesh) => {
+        ;(mesh.userData.edgeMarkers || []).forEach(({mesh: em}) => {
+          em.visible = false
+        })
+      })
+      measureMode = faceIndex !== null && faceIndex !== undefined
+      activeMeasureFace = measureMode ? faces[faceIndex] : null
+      if (activeMeasureFace) {
+        activeMeasureFace.userData.edgeMarkers.forEach(({mesh: em}) => {
+          em.visible = true
+        })
+      }
+    },
+
+    // Registers a listener called with {edgeIndex, lengthCm} whenever a rusuk marker is tapped in
+    // measure mode (FR-5 "Ukur"; value is fixed - see CM_PER_UNIT - and unaffected by pinch-zoom).
+    onEdgeMeasureTap: (listener) => {
+      edgeMeasureListeners.push(listener)
+    },
+
+    // Shows the computed height line (apex -> midpoint of the opposite side) for a triangular face
+    // and returns its length in cm (AC-5, "Ukur Tinggi Sisi"); returns null if the face isn't a
+    // triangle (e.g. box/quad faces, or a prism's rectangular side faces).
+    showHeightLine: (faceIndex) => {
+      const mesh = faces[faceIndex]
+      if (!mesh || !mesh.userData.heightLine) {
+        return null
+      }
+      mesh.userData.heightLine.line.visible = true
+      return mesh.userData.heightLine.lengthCm
+    },
+
+    // Hides a face's height line (if any).
+    hideHeightLine: (faceIndex) => {
+      const mesh = faces[faceIndex]
+      if (mesh && mesh.userData.heightLine) {
+        mesh.userData.heightLine.line.visible = false
+      }
+    },
   }
 }
