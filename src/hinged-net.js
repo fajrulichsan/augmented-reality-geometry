@@ -12,6 +12,40 @@ const average = (points) => (
   points.reduce((sum, p) => sum.add(p), new THREE.Vector3()).divideScalar(points.length)
 )
 
+// Unique undirected edges (as [idA, idB] pairs) implied by each face's vertex loop - used to build
+// rusuk (edge) tap targets alongside the net.
+const edgesFromFaceDefs = (faceDefs) => {
+  const seen = new Map()
+  faceDefs.forEach((def) => {
+    const n = def.verts.length
+    for (let i = 0; i < n; i++) {
+      const a = def.verts[i]
+      const b = def.verts[(i + 1) % n]
+      const key = a < b ? `${a}_${b}` : `${b}_${a}`
+      if (!seen.has(key)) {
+        seen.set(key, [a, b])
+      }
+    }
+  })
+  return Array.from(seen.values())
+}
+
+// The 8 corners/12 edges of an axis-aligned box - used for the cube/balok's titik sudut/rusuk tap
+// targets (independent of the box's face-plane net geometry).
+export const boxSolid = (width, height, depth) => {
+  const hw = width / 2
+  const hh = height / 2
+  const hd = depth / 2
+  const vertices = [
+    [-hw, -hh, -hd], [hw, -hh, -hd], [hw, hh, -hd], [-hw, hh, -hd],
+    [-hw, -hh, hd], [hw, -hh, hd], [hw, hh, hd], [-hw, hh, hd],
+  ].map(([x, y, z]) => new THREE.Vector3(x, y, z))
+  const edges = [
+    [0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7],
+  ]
+  return {vertices, edges}
+}
+
 // vertices: THREE.Vector3[] of the folded solid. faceDefs: [{verts: [vertexIds in polygon order],
 // parent: index of an earlier face (-1 for the root, which must be first), hinge: [idA, idB] shared
 // with the parent}]. Returns each face's flat outline in net space plus the hinge data needed to
@@ -105,7 +139,7 @@ export const pyramidSolid = (sides, radius, height) => {
     const next = (i + 1) % sides
     faceDefs.push({verts: [i, next, apex], parent: 0, hinge: [i, next]})
   }
-  return {vertices, faceDefs}
+  return {vertices, faceDefs, edges: edgesFromFaceDefs(faceDefs)}
 }
 
 // Right prism with a regular polygon base, centered on the origin. Net: a row of side rectangles
@@ -154,11 +188,9 @@ export const prismSolid = (sides, radius, height) => {
     })
   }
   const newIndex = new Map(order.map((oldIndex, i) => [oldIndex, i]))
-  return {
-    vertices,
-    faceDefs: order.map((oldIndex) => {
-      const def = faceDefs[oldIndex]
-      return {...def, parent: def.parent < 0 ? -1 : newIndex.get(def.parent)}
-    }),
-  }
+  const orderedFaceDefs = order.map((oldIndex) => {
+    const def = faceDefs[oldIndex]
+    return {...def, parent: def.parent < 0 ? -1 : newIndex.get(def.parent)}
+  })
+  return {vertices, faceDefs: orderedFaceDefs, edges: edgesFromFaceDefs(orderedFaceDefs)}
 }

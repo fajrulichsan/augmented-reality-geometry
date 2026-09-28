@@ -7,7 +7,7 @@
 import * as THREE from 'three';
 
 import cubeTexture from './assets/cube-texture.png'
-import {buildHingedNetDefs, prismSolid, pyramidSolid} from './hinged-net'
+import {buildHingedNetDefs, prismSolid, pyramidSolid, boxSolid} from './hinged-net'
 
 // Folded position/rotation match a unit BoxGeometry's faces. Net position/rotation lay the
 // faces out flat in a cross shape, all facing +z (same orientation as the front face).
@@ -51,11 +51,52 @@ const HIGHLIGHT_COLOR = 0xFFEB3B
 
 const PURPLE = 0xAD50FF
 
+const VERTEX_RADIUS = 0.04
+const EDGE_RADIUS = 0.02
+
+// Builds a vertex sphere and an edge cylinder, invisible by default - they exist purely as tap
+// targets for the "titik sudut"/"rusuk" aspects, and only become visible (as a temporary mark)
+// once tapped. `vertices`/`edges` are the solid's raw folded coordinates (correct as long as the
+// shape stays folded, which materi 1 never unfolds).
+const buildMarkers = (parent, vertices, edges) => {
+  const vertexMeshes = vertices.map((v) => {
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(VERTEX_RADIUS, 12, 12),
+      new THREE.MeshBasicMaterial({color: PURPLE})
+    )
+    mesh.position.copy(v)
+    mesh.visible = false
+    mesh.userData.highlighted = false
+    parent.add(mesh)
+    return mesh
+  })
+
+  const edgeMeshes = edges.map(([a, b]) => {
+    const pointA = vertices[a]
+    const pointB = vertices[b]
+    const dir = new THREE.Vector3().subVectors(pointB, pointA)
+    const length = dir.length()
+    const mesh = new THREE.Mesh(
+      new THREE.CylinderGeometry(EDGE_RADIUS, EDGE_RADIUS, length, 8),
+      new THREE.MeshBasicMaterial({color: PURPLE})
+    )
+    mesh.position.copy(pointA).addScaledVector(dir, 0.5)
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize())
+    mesh.visible = false
+    mesh.userData.highlighted = false
+    parent.add(mesh)
+    return mesh
+  })
+
+  return {vertexMeshes, edgeMeshes}
+}
+
 export const initScenePipelineModule = () => {
-  // Builds a box (cube or balok) out of 6 separate face planes so they can unfold into a net.
-  // Returns the faces so tap-to-highlight/double-tap-to-unfold can operate on them. `texture` is
-  // optional (only the cube has a labeled texture; the balok's faces are plain color).
-  const buildBoxNet = (faceDefs, groundOffset, texture) => {
+  // Builds a box (cube or balok) out of 6 separate face planes so they can unfold into a net, plus
+  // vertex/edge tap targets for the titik sudut/rusuk aspects. Returns the faces so
+  // tap-to-highlight/double-tap-to-unfold can operate on them. `texture` is optional (only the
+  // cube has a labeled texture; the balok's faces are plain color).
+  const buildBoxNet = (faceDefs, groundOffset, boxSize, texture) => {
     const group = new THREE.Group()
 
     const faces = faceDefs.map(({planeSize, foldedPos, foldedRot, netPos}) => {
@@ -80,20 +121,23 @@ export const initScenePipelineModule = () => {
       return mesh
     })
 
-    return {group, faces, groundOffset}
+    const solid = boxSolid(...boxSize)
+    const {vertexMeshes, edgeMeshes} = buildMarkers(group, solid.vertices, solid.edges)
+
+    return {group, faces, groundOffset, vertexMeshes, edgeMeshes}
   }
 
   const buildCubeNet = () => (
-    buildBoxNet(FACE_DEFS, 0.5, new THREE.TextureLoader().load(cubeTexture))
+    buildBoxNet(FACE_DEFS, 0.5, [1, 1, 1], new THREE.TextureLoader().load(cubeTexture))
   )
 
-  const buildBalokNet = () => buildBoxNet(boxFaceDefs(1.4, 1, 0.8), 0.5)
+  const buildBalokNet = () => buildBoxNet(boxFaceDefs(1.4, 1, 0.8), 0.5, [1.4, 1, 0.8])
 
   // Builds a prism/pyramid whose faces hinge on shared edges: unfolding rotates each face about
   // its hinge (relative to its parent face), so the net stays connected the whole way. The
   // returned applyPose(value) places every face for a fold amount (0 = solid, 1 = flat net); the
   // whole net also stands up to face the viewer (like the cube's) as it opens.
-  const buildHingedShape = ({vertices, faceDefs}) => {
+  const buildHingedShape = ({vertices, faceDefs, edges}) => {
     const {faces: defs, rootOrigin, rootQuat, netCenter} = buildHingedNetDefs(vertices, faceDefs)
     const group = new THREE.Group()
     const content = new THREE.Group()
@@ -134,9 +178,15 @@ export const initScenePipelineModule = () => {
     }
 
     applyPose(0)
+
+    // Added directly to `group` (not `content`) using the solid's raw folded vertices: at fold=0
+    // this matches exactly where the faces sit, and materi 1 (the only place these are used) never
+    // unfolds the net, so they never need to track the animation.
+    const {vertexMeshes, edgeMeshes} = buildMarkers(group, vertices, edges)
+
     // Solids are centered on the origin, so half their height rests them on the ground.
     const groundOffset = Math.max(...vertices.map((v) => Math.abs(v.y)))
-    return {group, faces, groundOffset, applyPose}
+    return {group, faces, groundOffset, applyPose, vertexMeshes, edgeMeshes}
   }
 
   const buildPyramidNet = (sides, baseRadius, height) => (
@@ -147,19 +197,28 @@ export const initScenePipelineModule = () => {
     buildHingedShape(prismSolid(sides, baseRadius, height))
   )
 
+  // Shape ids: 'kubus', 'balok', 'prisma-<n>', 'limas-<n>' for n = 3..12 (Segitiga=3, Segiempat=4,
+  // Segilima=5, and any other n via the Segi-n picker).
   const SHAPE_BUILDERS = {
     kubus: buildCubeNet,
     balok: buildBalokNet,
-    'prisma-segitiga': () => buildPrismNet(3, 0.75, 1),
-    'prisma-segilima': () => buildPrismNet(5, 0.7, 1),
-    'limas-segitiga': () => buildPyramidNet(3, 0.8, 1.1),
-    'limas-segilima': () => buildPyramidNet(5, 0.8, 1.1),
+  }
+  for (let n = 3; n <= 12; n++) {
+    SHAPE_BUILDERS[`prisma-${n}`] = () => buildPrismNet(n, 0.7, 1)
+    SHAPE_BUILDERS[`limas-${n}`] = () => buildPyramidNet(n, 0.8, 1.1)
   }
 
   let currentShapeId = 'kubus'
   let shapeGroup
   let faces = []
+  let vertexMeshes = []
+  let edgeMeshes = []
   let applyPose = null
+
+  // Aspect target (materi 1's guided flow): which tap targets are active - 'sisi' (faces), 'rusuk'
+  // (edgeMeshes) or 'titik' (vertexMeshes). Ignored while netMode is on (materi 2 always taps
+  // faces to fold/unfold).
+  let aspectTarget = 'sisi'
 
   let sceneRef = null
   let pendingShapeId = null
@@ -216,6 +275,8 @@ export const initScenePipelineModule = () => {
     shapeGroup = built.group
     shapeGroup.position.set(0, built.groundOffset, 0)
     faces = built.faces
+    vertexMeshes = built.vertexMeshes || []
+    edgeMeshes = built.edgeMeshes || []
     applyPose = built.applyPose || null
 
     currentShapeId = shapeId
@@ -297,19 +358,44 @@ export const initScenePipelineModule = () => {
     notifyProgress()
   }
 
-  // Toggles a face's material between its base color and the highlight color. Stays until
-  // toggled again (or the shape is switched) — it does not fade out on its own, so a student can
-  // tap through every face to count them without the marks disappearing.
-  const toggleFaceHighlight = (mesh) => {
+  // Toggles a mesh's material between its base color and the highlight color, marking it as
+  // "observed". Faces stay visible always; edge/vertex markers are invisible by default and only
+  // appear once tapped, since the solid's own geometry already shows their true edges/corners.
+  // Stays until toggled again (or the shape/aspect changes) so a student can tap through every
+  // item to count them without the marks disappearing.
+  const toggleMarkHighlight = (mesh, alwaysVisible) => {
     mesh.userData.highlighted = !mesh.userData.highlighted
     mesh.material.color.setHex(mesh.userData.highlighted ? HIGHLIGHT_COLOR : PURPLE)
+    if (!alwaysVisible) {
+      mesh.visible = mesh.userData.highlighted
+    }
   }
 
-  // Returns true if the tap hit a shape face. A single tap toggles that face's highlight (to help
-  // count faces). A second tap on the same face within DOUBLE_TAP_WINDOW_MS toggles the
-  // fold/unfold animation instead. No-op (returns false) if the current shape has no net.
+  const toggleFaceHighlight = (mesh) => toggleMarkHighlight(mesh, true)
+
+  // Which meshes are tappable right now: faces while unfolding a net (materi 2), otherwise
+  // whichever aspect target the guided flow (materi 1) has selected.
+  const pickableMeshes = () => {
+    if (netMode) {
+      return faces
+    }
+    if (aspectTarget === 'rusuk') {
+      return edgeMeshes
+    }
+    if (aspectTarget === 'titik') {
+      return vertexMeshes
+    }
+    return faces
+  }
+
+  // Returns true if the tap hit a pickable mesh. In net mode (materi 2), a single tap toggles a
+  // face's highlight and a second tap on the same face within DOUBLE_TAP_WINDOW_MS folds/unfolds
+  // the net instead. Outside net mode (materi 1's guided flow), a tap simply toggles the mark for
+  // whichever aspect target is active. No-op (returns false) if the current shape has no net/no
+  // markers, or nothing was hit.
   const handleCubeTap = (clientX, clientY, canvas, camera) => {
-    if (faces.length === 0) {
+    const pickable = pickableMeshes()
+    if (pickable.length === 0) {
       return false
     }
 
@@ -319,26 +405,27 @@ export const initScenePipelineModule = () => {
 
     raycaster.setFromCamera(pointer, camera)
 
-    const intersection = raycaster.intersectObjects(faces, false)[0]
+    const intersection = raycaster.intersectObjects(pickable, false)[0]
     if (!intersection) {
       return false
     }
 
-    if (netMode) {
-      setOpen(!isOpen)
+    const mesh = intersection.object
+
+    if (!netMode) {
+      toggleMarkHighlight(mesh, aspectTarget === 'sisi')
       return true
     }
 
-    const face = intersection.object
     const now = performance.now()
-    const isDoubleTap = face === lastTapFace && now - lastTapTime < DOUBLE_TAP_WINDOW_MS
+    const isDoubleTap = mesh === lastTapFace && now - lastTapTime < DOUBLE_TAP_WINDOW_MS
 
     if (isDoubleTap) {
       setOpen(!isOpen)
       lastTapFace = null
     } else {
-      toggleFaceHighlight(face)
-      lastTapFace = face
+      toggleFaceHighlight(mesh)
+      lastTapFace = mesh
       lastTapTime = now
     }
     return true
@@ -472,6 +559,35 @@ export const initScenePipelineModule = () => {
     // closes the net gradually instead of toggling face highlights.
     setNetMode: (enabled) => {
       netMode = enabled
+    },
+
+    // Sets which aspect target (materi 1's guided flow) taps operate on: 'sisi' (faces), 'rusuk'
+    // (edges) or 'titik' (vertices).
+    setAspectTarget: (target) => {
+      aspectTarget = target
+    },
+
+    // Clears every "observed" mark on the current shape (faces, edges, vertices) and hides the
+    // edge/vertex markers again. Called when the aspect or shape changes.
+    resetMarks: () => {
+      faces.forEach((mesh) => {
+        mesh.userData.highlighted = false
+        mesh.material.color.setHex(PURPLE)
+      })
+      ;[...edgeMeshes, ...vertexMeshes].forEach((mesh) => {
+        mesh.userData.highlighted = false
+        mesh.material.color.setHex(PURPLE)
+        mesh.visible = false
+      })
+    },
+
+    // Toggles a see-through material on the faces (F7 "Transparansi Model") so rusuk/titik sudut
+    // on the far side of the solid become easier to reach.
+    setTransparent: (enabled) => {
+      faces.forEach((mesh) => {
+        mesh.material.transparent = enabled
+        mesh.material.opacity = enabled ? 0.35 : 1
+      })
     },
 
     // Directly sets the fold/unfold amount from a 0-100 percentage (e.g. a slider being dragged),
