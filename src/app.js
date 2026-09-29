@@ -5,6 +5,7 @@ import {initMateri1} from './materi-1'
 import {initMateri2} from './materi-2'
 import {initMateri3} from './materi-3'
 import {initMateri4} from './materi-4'
+import {initMateri5} from './materi-5'
 import * as THREE from 'three';
 
 window.THREE = THREE
@@ -46,6 +47,7 @@ const NET_SHAPES = ['kubus', 'balok', 'prisma-3', 'prisma-5', 'limas-3', 'limas-
 // limas), same as materi 1's solid (non-net) rendering mode.
 const MATERI_3 = '3'
 const MATERI_4 = '4'
+const MATERI_5 = '5'
 
 const initShapePicker = () => {
   const toggle = document.getElementById('shape-toggle')
@@ -65,11 +67,13 @@ const initShapePicker = () => {
   const materi2Root = document.getElementById('materi-2-root')
   const materi3Root = document.getElementById('materi-3-root')
   const materi4Root = document.getElementById('materi-4-root')
+  const materi5Root = document.getElementById('materi-5-root')
 
   const applyMateriState = () => {
     const isNetMateri = materiSelect.value === NET_MATERI
     const isMateri3 = materiSelect.value === MATERI_3
     const isMateri4 = materiSelect.value === MATERI_4
+    const isMateri5 = materiSelect.value === MATERI_5
 
     // Lock the shape picker to net-capable shapes while in net mode.
     Array.from(shapeSelect.options).forEach((option) => {
@@ -85,10 +89,11 @@ const initShapePicker = () => {
 
     // The dev shape-popup only drives the raw scene; the guided-flow overlay shown underneath
     // it switches too, so the popup's materi choice always matches what's on screen.
-    materi1Root.classList.toggle('hidden', isNetMateri || isMateri3 || isMateri4)
+    materi1Root.classList.toggle('hidden', isNetMateri || isMateri3 || isMateri4 || isMateri5)
     materi2Root.classList.toggle('hidden', !isNetMateri)
     materi3Root.classList.toggle('hidden', !isMateri3)
     materi4Root.classList.toggle('hidden', !isMateri4)
+    materi5Root.classList.toggle('hidden', !isMateri5)
   }
 
   materiSelect.addEventListener('change', applyMateriState)
@@ -115,6 +120,7 @@ const onxrloaded = () => {
   initMateri2(sceneModule, {startAr})
   initMateri3(sceneModule, {startAr})
   initMateri4(sceneModule, {startAr})
+  initMateri5(sceneModule, {startAr})
 }
 
 window.XR8 ? onxrloaded() : window.addEventListener('xrloaded', onxrloaded)

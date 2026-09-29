@@ -179,6 +179,7 @@ const buildMarkers = (parent, vertices, edges) => {
     mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize())
     mesh.visible = false
     mesh.userData.highlighted = false
+    mesh.userData.units = length
     parent.add(mesh)
     return mesh
   })
@@ -340,6 +341,17 @@ export const initScenePipelineModule = () => {
   let dragMode = 'rotate'
   const orderLabels = []
 
+  // Materi 5 (faktor skala): the model's scale is viewZoom (camera-style zoom, pinch / +/-) times
+  // kCur (the faktor skala k, eased towards kTarget). They are kept apart so zooming the view never
+  // changes k. Every other materi leaves k at 1, so their behavior is unchanged.
+  let viewZoom = 1
+  let kCur = 1
+  let kTarget = 1
+  let groundUnits = 0
+  let shapeRadius = 1
+  let shapeHeight = 1
+  let compare = null // {group, k, ground, labelCmp, labelMain}
+
   // Aspect target (materi 1's guided flow): which tap targets are active - 'sisi' (faces), 'rusuk'
   // (edgeMeshes) or 'titik' (vertexMeshes). Ignored while netMode is on (materi 2 always taps
   // faces to fold/unfold).
@@ -379,6 +391,7 @@ export const initScenePipelineModule = () => {
   // Materi 3: notified with a face's index whenever it's tapped while aspectTarget === 'sisi-select'
   // (used for its per-face aspects, which manage selection/coloring themselves via setFaceSelection
   // instead of the simple toggle-highlight the other materis use).
+  const partTapListeners = []
   const faceTapListeners = []
   const notifyFaceTap = (index) => {
     faceTapListeners.forEach((listener) => listener(index))
@@ -419,6 +432,56 @@ export const initScenePipelineModule = () => {
   let pinchStartDistance = 0
   let pinchStartScale = 1
 
+  const applyScale = () => {
+    if (!shapeGroup) {
+      return
+    }
+    shapeGroup.scale.setScalar(viewZoom * kCur)
+    shapeGroup.position.y = groundUnits * kCur
+    homePosition.y = groundUnits * kCur
+  }
+
+  const makeLabelSprite = (text) => {
+    const c = document.createElement('canvas')
+    c.width = 256
+    c.height = 64
+    const ctx = c.getContext('2d')
+    ctx.fillStyle = 'rgba(0,0,0,0.7)'
+    ctx.fillRect(0, 0, 256, 64)
+    ctx.fillStyle = '#ffffff'
+    ctx.font = 'bold 28px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(text, 128, 34)
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({map: new THREE.CanvasTexture(c), depthTest: false}))
+    sprite.scale.set(0.6, 0.15, 1)
+    sprite.renderOrder = 10
+    return sprite
+  }
+
+  const removeCompare = () => {
+    if (compare && sceneRef) {
+      sceneRef.remove(compare.group)
+      sceneRef.remove(compare.labelCmp)
+      sceneRef.remove(compare.labelMain)
+    }
+    compare = null
+  }
+
+  // Keeps the comparison model (and the 3D captions) beside the main model, mirroring its
+  // rotation/zoom, and spaced by both models' widths so they never overlap.
+  const syncCompare = () => {
+    if (!compare || !shapeGroup) {
+      return
+    }
+    const offset = (shapeRadius * kCur + shapeRadius * compare.k + 0.35) * viewZoom
+    compare.group.position.set(shapeGroup.position.x - offset, compare.ground * compare.k, shapeGroup.position.z)
+    compare.group.rotation.copy(shapeGroup.rotation)
+    compare.group.scale.setScalar(viewZoom * compare.k)
+    compare.labelCmp.position.set(compare.group.position.x, (shapeHeight * compare.k * viewZoom) + 0.3, compare.group.position.z)
+    compare.labelMain.position.set(shapeGroup.position.x, (shapeHeight * kCur * viewZoom) + 0.3, shapeGroup.position.z)
+  }
+
   // Removes the current shape from the scene (if any) and adds the requested one in its place.
   const switchShape = (shapeId) => {
     if (!sceneRef || !SHAPE_BUILDERS[shapeId] || (shapeGroup && shapeId === currentShapeId)) {
@@ -428,6 +491,10 @@ export const initScenePipelineModule = () => {
     if (shapeGroup) {
       sceneRef.remove(shapeGroup)
     }
+    removeCompare()
+    viewZoom = 1
+    kCur = 1
+    kTarget = 1
 
     const built = SHAPE_BUILDERS[shapeId]()
     shapeGroup = built.group
@@ -438,6 +505,11 @@ export const initScenePipelineModule = () => {
     applyPose = built.applyPose || null
     pyramidHeight = built.pyramidHeight || null
     homePosition = shapeGroup.position.clone()
+    groundUnits = built.groundOffset
+    const box = new THREE.Box3().setFromObject(shapeGroup)
+    const size = box.getSize(new THREE.Vector3())
+    shapeRadius = Math.max(size.x, size.z) / 2
+    shapeHeight = size.y
     orderLabels.length = 0
 
     currentShapeId = shapeId
@@ -551,7 +623,7 @@ export const initScenePipelineModule = () => {
     if (measureMode) {
       return activeMeasureFace ? activeMeasureFace.userData.edgeMarkers.map(({mesh}) => mesh) : []
     }
-    if (aspectTarget === 'rusuk') {
+    if (aspectTarget === 'rusuk' || aspectTarget === 'rusuk-select') {
       return edgeMeshes
     }
     if (aspectTarget === 'titik') {
@@ -592,6 +664,11 @@ export const initScenePipelineModule = () => {
     }
 
     if (!netMode) {
+      if (aspectTarget === 'rusuk-select') {
+        // Materi 5: report which rusuk was tapped; the guided flow decides what to show.
+        partTapListeners.forEach((listener) => listener(edgeMeshes.indexOf(mesh)))
+        return true
+      }
       if (aspectTarget === 'sisi-select') {
         // Materi 3's per-face aspects: report the tap, let the guided flow manage up-to-2-face
         // selection/coloring itself via setFaceSelection.
@@ -663,7 +740,7 @@ export const initScenePipelineModule = () => {
           } else if (e.touches.length === 2) {
             dragTouchId = null
             pinchStartDistance = touchDistance(e.touches[0], e.touches[1])
-            pinchStartScale = shapeGroup.scale.x
+            pinchStartScale = viewZoom
           }
         }, true
       )
@@ -675,7 +752,8 @@ export const initScenePipelineModule = () => {
             const scale = THREE.MathUtils.clamp(
               pinchStartScale * (distance / pinchStartDistance), MIN_SCALE, MAX_SCALE
             )
-            shapeGroup.scale.setScalar(scale)
+            viewZoom = scale
+            applyScale()
             return
           }
 
@@ -733,6 +811,14 @@ export const initScenePipelineModule = () => {
     // fold/unfold animation.
     onUpdate: () => {
       updateAnimation()
+      if (kCur !== kTarget) {
+        kCur += (kTarget - kCur) * 0.18
+        if (Math.abs(kTarget - kCur) < 0.002) {
+          kCur = kTarget
+        }
+        applyScale()
+      }
+      syncCompare()
     },
 
     // Switches the displayed shape. Can be called before the scene has started (e.g. from a UI
@@ -758,6 +844,8 @@ export const initScenePipelineModule = () => {
     // (edges) or 'titik' (vertices).
     setAspectTarget: (target) => {
       aspectTarget = target
+      // Thicker (easier to tap) rusuk targets while a student is picking a part to measure.
+      edgeMeshes.forEach((mesh) => mesh.scale.set(target === 'rusuk-select' ? 3 : 1, 1, target === 'rusuk-select' ? 3 : 1))
     },
 
     // Clears every "observed" mark on the current shape (faces, edges, vertices) and hides the
@@ -778,6 +866,8 @@ export const initScenePipelineModule = () => {
       ;[...edgeMeshes, ...vertexMeshes].forEach((mesh) => {
         mesh.userData.highlighted = false
         mesh.material.color.setHex(PURPLE)
+        mesh.material.depthTest = true
+        mesh.renderOrder = 0
         mesh.visible = false
       })
       measureMode = false
@@ -977,27 +1067,82 @@ export const initScenePipelineModule = () => {
     },
     scaleModel: (factor) => {
       if (shapeGroup) {
-        shapeGroup.scale.setScalar(THREE.MathUtils.clamp(shapeGroup.scale.x * factor, MIN_SCALE, MAX_SCALE))
+        viewZoom = THREE.MathUtils.clamp(viewZoom * factor, MIN_SCALE, MAX_SCALE)
+        applyScale()
       }
     },
     resetModel: () => {
       if (shapeGroup) {
         shapeGroup.position.copy(homePosition)
         shapeGroup.rotation.set(0, 0, 0)
-        shapeGroup.scale.setScalar(1)
+        viewZoom = 1
+        applyScale()
       }
     },
     getModelTransform: () => shapeGroup && ({
       position: shapeGroup.position.toArray(),
       rotation: [shapeGroup.rotation.x, shapeGroup.rotation.y, shapeGroup.rotation.z],
-      scale: shapeGroup.scale.x,
+      scale: viewZoom,
     }),
     setModelTransform: (transform) => {
       if (shapeGroup && transform) {
         shapeGroup.position.fromArray(transform.position)
         shapeGroup.rotation.set(...transform.rotation)
-        shapeGroup.scale.setScalar(transform.scale)
+        viewZoom = transform.scale
+        applyScale()
       }
+    },
+
+    // --- Materi 5 additions (PRD-materi-5.md) ---
+
+    // Faktor skala k: eases the model to k times its size at the same spot (immediate = snap).
+    // Independent of the view zoom above.
+    setK: (k, immediate = false) => {
+      kTarget = k
+      if (immediate) {
+        kCur = k
+      }
+      applyScale()
+    },
+
+    // Registers a listener called with a rusuk's index when it is tapped while
+    // setAspectTarget('rusuk-select') is active.
+    onPartTap: (listener) => {
+      partTapListeners.push(listener)
+    },
+
+    // Every rusuk's length in scene units at k=1 (the flow turns these into cm, single source).
+    getPartUnits: () => edgeMeshes.map((mesh) => mesh.userData.units),
+
+    // Highlights exactly one rusuk (always drawn on top so it is visible from any side); null clears.
+    setSelectedPart: (index) => {
+      edgeMeshes.forEach((mesh, i) => {
+        mesh.visible = i === index
+        mesh.material.color.setHex(HIGHLIGHT_COLOR)
+        mesh.material.depthTest = false
+        mesh.renderOrder = 5
+      })
+    },
+
+    // Shows a second copy of the current shape at factor kOther beside the main model, each with a
+    // caption ("Model Awal k=1" / "Model Baru k=2").
+    showCompare: (kOther, captionOther, captionMain) => {
+      removeCompare()
+      if (!sceneRef || !SHAPE_BUILDERS[currentShapeId]) {
+        return
+      }
+      const built = SHAPE_BUILDERS[currentShapeId]()
+      const labelCmp = makeLabelSprite(captionOther)
+      const labelMain = makeLabelSprite(captionMain)
+      sceneRef.add(built.group)
+      sceneRef.add(labelCmp)
+      sceneRef.add(labelMain)
+      compare = {group: built.group, k: kOther, ground: built.groundOffset, labelCmp, labelMain}
+      syncCompare()
+    },
+
+    hideCompare: () => {
+      removeCompare()
     },
   }
 }
