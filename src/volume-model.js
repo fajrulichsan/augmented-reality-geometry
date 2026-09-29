@@ -4,6 +4,7 @@
 // All sizes are in "satuan" (mathematical units). One satuan is VU scene units, so the numbers the
 // flow reports come from the model's own dimensions, never from how big it looks on screen.
 import * as THREE from 'three'
+import {buildPairModel} from './pair-model'
 
 export const VU = 0.3
 
@@ -99,6 +100,9 @@ const disposeTree = (root) => {
 // Returns {group, edgeMeshes, height, radius, spec, view, update(patch)}. The group is centered on
 // its origin; the caller rests it on the ground with height / 2.
 export const buildVolumeModel = (initialSpec) => {
+  if (initialSpec.kind === 'pair') {
+    return buildPairModel(initialSpec)
+  }
   const group = new THREE.Group()
   const inner = new THREE.Group()
   group.add(inner)

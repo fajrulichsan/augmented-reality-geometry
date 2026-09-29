@@ -1,0 +1,209 @@
+/* Materi 7 guided flow (screens injected by ./index.js into #materi-6-root). Reuses the shared
+   .screen/.btn-* look from materi 1; this file adds the eksplorasi bar and model controls. */
+@import '../materi-1/materi-1.css';
+
+#eksplorasi-bar-m7 {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 25;
+  font-family: sans-serif;
+  color: #fff;
+  box-sizing: border-box;
+  background: rgba(20, 20, 20, 0.92);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+#eksplorasi-bar-m7.hidden {
+  display: none;
+}
+
+#m7-controls {
+  position: fixed;
+  right: 16px;
+  top: 76px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#m7-controls button {
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 22px;
+  line-height: 1;
+}
+
+#m7-controls button.active {
+  background: #AD50FF;
+}
+
+#m7-prompt {
+  padding: 12px 16px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+#m7-hint {
+  margin: 0 16px 10px;
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #ddd;
+  border-left: 3px solid #AD50FF;
+}
+
+#m7-info {
+  margin: 0 16px 12px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+#m7-hint.hidden,
+#m7-info.hidden {
+  display: none;
+}
+
+#m7-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 16px 10px;
+}
+
+#m7-actions button {
+  flex: 1 1 45%;
+  margin-bottom: 0;
+  font-size: 13px;
+  padding: 10px 8px;
+}
+
+#m7-actions button.small {
+  flex: 0 0 auto;
+  font-size: 12px;
+  padding: 6px 10px;
+  min-height: 32px;
+  width: auto;
+}
+
+#m7-trailer {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+#m7-trailer button {
+  flex: 1;
+  margin-bottom: 0;
+  font-size: 12px;
+  padding: 10px 6px;
+}
+
+#m7-label {
+  padding: 8px 16px 0;
+  font-size: 13px;
+  font-weight: bold;
+  color: #4FC3F7;
+}
+
+#m7-picker {
+  display: flex;
+  gap: 8px;
+  padding: 0 16px 10px;
+}
+
+#m7-picker button {
+  flex: 1;
+  margin-bottom: 0;
+  font-size: 16px;
+  padding: 10px 0;
+}
+
+#m7-picker button.active {
+  outline: 2px solid #FFEB3B;
+}
+
+#m7-picker.hidden,
+#m7-label.hidden,
+#m7-trailer.hidden {
+  display: none;
+}
+
+.alas-row-m7 {
+  margin-top: 12px;
+}
+
+#m7-input {
+  margin: 0 16px 12px;
+}
+
+#m7-input label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+#m7-input input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 16px;
+}
+
+#m7-input-error {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #FF7043;
+}
+
+#m7-input.hidden,
+#m7-input-error.hidden {
+  display: none;
+}
+
+#m7-actions button:disabled {
+  opacity: 0.5;
+}
+
+#kecukupan-options-m7 button {
+  display: block;
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+#m7-fill-status {
+  margin: 0 16px 10px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+#m7-fill-status.hidden {
+  display: none;
+}
+
+.m7-note {
+  margin: 0 16px 10px;
+  font-size: 12px;
+  color: #bbb;
+}
+
+.m7-note.hidden {
+  display: none;
+}
