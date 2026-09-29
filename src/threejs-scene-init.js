@@ -50,6 +50,7 @@ const easeInOutQuad = (t) => (t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t)
 const HIGHLIGHT_COLOR = 0xFFEB3B
 
 const PURPLE = 0xAD50FF
+const CYAN = 0x00E5FF
 
 // Materi 3's up-to-2-face selection uses two distinct colors (one per slot) instead of the single
 // toggle-highlight color the other materis use.
@@ -69,6 +70,41 @@ const CM_PER_UNIT = 25
 // `corners` are the face's own polygon corners, in order, in the mesh's local (flat) coordinate
 // space - the markers are added as children of `mesh` so they inherit its exact pose (and any
 // pinch-scale) automatically, without needing to duplicate the shape's global vertex bookkeeping.
+// Thin solid bar between two points (a line that stays visible at any zoom, unlike 1px GL lines).
+const makeBar = (a, b, radius, color) => {
+  const dir = new THREE.Vector3().subVectors(b, a)
+  const bar = new THREE.Mesh(
+    new THREE.CylinderGeometry(radius, radius, dir.length(), 6),
+    new THREE.MeshBasicMaterial({color})
+  )
+  bar.position.copy(a).addScaledVector(dir, 0.5)
+  bar.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize())
+  return bar
+}
+
+// Same as makeBar but broken into short dashes, so it reads as a different line style (materi 4's
+// "tinggi limas" vs "tinggi segitiga sisi tegak") without depending on color alone.
+const makeDashedBar = (a, b, radius, color, dashCount = 9) => {
+  const group = new THREE.Group()
+  const step = new THREE.Vector3().subVectors(b, a).divideScalar(dashCount * 2 - 1)
+  for (let i = 0; i < dashCount; i++) {
+    const start = a.clone().addScaledVector(step, i * 2)
+    group.add(makeBar(start, start.clone().add(step), radius, color))
+  }
+  return group
+}
+
+// Small square corner mark (the "tanda siku-siku") at `corner`, between unit directions u and w.
+const makeRightAngleMark = (corner, u, w, size, color) => {
+  const group = new THREE.Group()
+  const p1 = corner.clone().addScaledVector(u, size)
+  const p2 = p1.clone().addScaledVector(w, size)
+  const p3 = corner.clone().addScaledVector(w, size)
+  group.add(makeBar(p1, p2, 0.008, color))
+  group.add(makeBar(p2, p3, 0.008, color))
+  return group
+}
+
 const attachFaceMeasureTools = (mesh, corners) => {
   const sides = corners.length
   mesh.userData.sides = sides
@@ -99,10 +135,12 @@ const attachFaceMeasureTools = (mesh, corners) => {
     const apex = corners[2]
     const mid = corners[0].clone().add(corners[1]).multiplyScalar(0.5)
     const lengthCm = Math.round(apex.distanceTo(mid) * CM_PER_UNIT * 10) / 10
-    const line = new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints([apex, mid]),
-      new THREE.LineBasicMaterial({color: HIGHLIGHT_COLOR})
-    )
+    // Height line + right-angle mark at its foot (AC-5 of materi 4), shown together.
+    const line = new THREE.Group()
+    line.add(makeBar(apex, mid, 0.012, HIGHLIGHT_COLOR))
+    const along = new THREE.Vector3().subVectors(corners[1], corners[0]).normalize()
+    const up = new THREE.Vector3().subVectors(apex, mid).normalize()
+    line.add(makeRightAngleMark(mid, along, up, 0.07, HIGHLIGHT_COLOR))
     line.visible = false
     mesh.add(line)
     mesh.userData.heightLine = {line, lengthCm}
@@ -259,9 +297,22 @@ export const initScenePipelineModule = () => {
     return {group, faces, groundOffset, applyPose, vertexMeshes, edgeMeshes}
   }
 
-  const buildPyramidNet = (sides, baseRadius, height) => (
-    buildHingedShape(pyramidSolid(sides, baseRadius, height))
-  )
+  // Besides the faces, a pyramid carries a hidden "tinggi limas" marker (materi 4): a dashed line
+  // from the apex straight down to the base's center, with a right-angle mark against a base radius.
+  const buildPyramidNet = (sides, baseRadius, height) => {
+    const solid = pyramidSolid(sides, baseRadius, height)
+    const built = buildHingedShape(solid)
+    const apex = solid.vertices[sides]
+    const center = new THREE.Vector3(0, -height / 2, 0)
+    const holder = new THREE.Group()
+    holder.add(makeDashedBar(apex, center, 0.012, CYAN))
+    const toRim = new THREE.Vector3().subVectors(solid.vertices[0], center).normalize()
+    holder.add(makeRightAngleMark(center, toRim, new THREE.Vector3(0, 1, 0), 0.08, CYAN))
+    holder.visible = false
+    built.group.add(holder)
+    built.pyramidHeight = {obj: holder, lengthCm: Math.round(height * CM_PER_UNIT * 10) / 10}
+    return built
+  }
 
   const buildPrismNet = (sides, baseRadius, height) => (
     buildHingedShape(prismSolid(sides, baseRadius, height))
@@ -284,6 +335,10 @@ export const initScenePipelineModule = () => {
   let vertexMeshes = []
   let edgeMeshes = []
   let applyPose = null
+  let pyramidHeight = null
+  let homePosition = new THREE.Vector3()
+  let dragMode = 'rotate'
+  const orderLabels = []
 
   // Aspect target (materi 1's guided flow): which tap targets are active - 'sisi' (faces), 'rusuk'
   // (edgeMeshes) or 'titik' (vertexMeshes). Ignored while netMode is on (materi 2 always taps
@@ -339,6 +394,11 @@ export const initScenePipelineModule = () => {
     edgeMeasureListeners.forEach((listener) => listener({edgeIndex, lengthCm}))
   }
 
+  const clearOrderLabels = () => {
+    orderLabels.forEach((sprite) => sprite.parent && sprite.parent.remove(sprite))
+    orderLabels.length = 0
+  }
+
   const raycaster = new THREE.Raycaster()
   const pointer = new THREE.Vector2()
 
@@ -348,6 +408,7 @@ export const initScenePipelineModule = () => {
 
   // One-finger drag-to-rotate / two-finger pinch-to-scale state.
   const ROTATE_SPEED = 0.006
+  const MOVE_SPEED = 0.004
   const MIN_SCALE = 0.4
   const MAX_SCALE = 3
   const DRAG_THRESHOLD_PX = 10
@@ -375,6 +436,9 @@ export const initScenePipelineModule = () => {
     vertexMeshes = built.vertexMeshes || []
     edgeMeshes = built.edgeMeshes || []
     applyPose = built.applyPose || null
+    pyramidHeight = built.pyramidHeight || null
+    homePosition = shapeGroup.position.clone()
+    orderLabels.length = 0
 
     currentShapeId = shapeId
     isOpen = false
@@ -630,8 +694,13 @@ export const initScenePipelineModule = () => {
           }
           dragMoved = true
 
-          shapeGroup.rotation.y += deltaX * ROTATE_SPEED
-          shapeGroup.rotation.x += deltaY * ROTATE_SPEED
+          if (dragMode === 'move') {
+            shapeGroup.position.x += deltaX * MOVE_SPEED
+            shapeGroup.position.z += deltaY * MOVE_SPEED
+          } else {
+            shapeGroup.rotation.y += deltaX * ROTATE_SPEED
+            shapeGroup.rotation.x += deltaY * ROTATE_SPEED
+          }
           dragLastX = touch.clientX
           dragLastY = touch.clientY
         }, true
@@ -713,6 +782,10 @@ export const initScenePipelineModule = () => {
       })
       measureMode = false
       activeMeasureFace = null
+      if (pyramidHeight) {
+        pyramidHeight.obj.visible = false
+      }
+      clearOrderLabels()
     },
 
     // Toggles a see-through material on the faces (F7 "Transparansi Model") so rusuk/titik sudut
@@ -813,6 +886,117 @@ export const initScenePipelineModule = () => {
       const mesh = faces[faceIndex]
       if (mesh && mesh.userData.heightLine) {
         mesh.userData.heightLine.line.visible = false
+      }
+    },
+
+    // --- Materi 4 additions (PRD-materi-4.md) ---
+
+    // Styles faces by role: styles = {faceIndex: 'a' | 'b' | 'dim'}. 'a'/'b' are the two highlight
+    // colors ('b' is also slightly see-through so the two aren't told apart by color alone), 'dim'
+    // fades a face out (A5/A7's "sisi lain redup"). Faces not listed go back to normal.
+    setFaceView: (styles) => {
+      faces.forEach((mesh, i) => {
+        const role = styles[i]
+        mesh.material.color.setHex(role === 'a' ? SELECT_COLOR_A : role === 'b' ? SELECT_COLOR_B : PURPLE)
+        const opacity = role === 'dim' ? 0.18 : role === 'b' ? 0.75 : 1
+        mesh.material.transparent = opacity < 1
+        mesh.material.opacity = opacity
+      })
+    },
+
+    // Puts a numbered badge (1, 2, 3...) on each face in `order` (array of face indices, in tap
+    // order) and clears any earlier badges. Pass [] to clear.
+    setFaceOrderLabels: (order) => {
+      clearOrderLabels()
+      order.forEach((faceIndex, n) => {
+        const mesh = faces[faceIndex]
+        const c = document.createElement('canvas')
+        c.width = 64
+        c.height = 64
+        const ctx = c.getContext('2d')
+        ctx.fillStyle = '#ffffff'
+        ctx.beginPath()
+        ctx.arc(32, 32, 30, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.fillStyle = '#000000'
+        ctx.font = 'bold 36px sans-serif'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(String(n + 1), 32, 34)
+        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+          map: new THREE.CanvasTexture(c), depthTest: false,
+        }))
+        sprite.scale.setScalar(0.22)
+        sprite.renderOrder = 10
+        const corners = mesh.userData.edgeMarkers.map(({mesh: em}) => em.position)
+        const centroid = corners.reduce((sum, p) => sum.add(p), new THREE.Vector3()).multiplyScalar(1 / corners.length)
+        sprite.position.copy(centroid)
+        mesh.add(sprite)
+        orderLabels.push(sprite)
+      })
+    },
+
+    // Fixed cm lengths of a face's rusuk, in edge order (same source as the tappable markers).
+    getEdgeLengths: (faceIndex) => (
+      faces[faceIndex] ? faces[faceIndex].userData.edgeMarkers.map(({lengthCm}) => lengthCm) : []
+    ),
+
+    // Reveals one rusuk marker of a face (e.g. edge 0 = a lateral face's base segment) without
+    // needing measure mode, and returns its length in cm.
+    showFaceEdge: (faceIndex, edgeIndex) => {
+      const marker = faces[faceIndex].userData.edgeMarkers[edgeIndex]
+      marker.mesh.visible = true
+      marker.mesh.material.color.setHex(HIGHLIGHT_COLOR)
+      return marker.lengthCm
+    },
+
+    hideFaceEdge: (faceIndex, edgeIndex) => {
+      const marker = faces[faceIndex].userData.edgeMarkers[edgeIndex]
+      marker.mesh.visible = false
+      marker.mesh.material.color.setHex(PURPLE)
+    },
+
+    // Shows/hides the dashed "tinggi limas" (apex straight down to the base) and returns its cm
+    // value (null when the current shape isn't a pyramid).
+    showPyramidHeight: (visible) => {
+      if (!pyramidHeight) {
+        return null
+      }
+      pyramidHeight.obj.visible = visible
+      return pyramidHeight.lengthCm
+    },
+
+    // Model controls (PRD 4.3). 'rotate' = one-finger drag turns the model, 'move' = it slides it.
+    setDragMode: (mode) => {
+      dragMode = mode
+    },
+    rotateModel: (radians) => {
+      if (shapeGroup) {
+        shapeGroup.rotation.y += radians
+      }
+    },
+    scaleModel: (factor) => {
+      if (shapeGroup) {
+        shapeGroup.scale.setScalar(THREE.MathUtils.clamp(shapeGroup.scale.x * factor, MIN_SCALE, MAX_SCALE))
+      }
+    },
+    resetModel: () => {
+      if (shapeGroup) {
+        shapeGroup.position.copy(homePosition)
+        shapeGroup.rotation.set(0, 0, 0)
+        shapeGroup.scale.setScalar(1)
+      }
+    },
+    getModelTransform: () => shapeGroup && ({
+      position: shapeGroup.position.toArray(),
+      rotation: [shapeGroup.rotation.x, shapeGroup.rotation.y, shapeGroup.rotation.z],
+      scale: shapeGroup.scale.x,
+    }),
+    setModelTransform: (transform) => {
+      if (shapeGroup && transform) {
+        shapeGroup.position.fromArray(transform.position)
+        shapeGroup.rotation.set(...transform.rotation)
+        shapeGroup.scale.setScalar(transform.scale)
       }
     },
   }

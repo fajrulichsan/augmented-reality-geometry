@@ -1,0 +1,110 @@
+/* Materi 4 guided flow (screens injected by ./index.js into #materi-4-root). Reuses the shared
+   .screen/.btn-* look from materi 1; this file adds the eksplorasi bar and model controls. */
+@import '../materi-1/materi-1.css';
+
+#eksplorasi-bar-m4 {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 25;
+  font-family: sans-serif;
+  color: #fff;
+  box-sizing: border-box;
+  background: rgba(20, 20, 20, 0.92);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+#eksplorasi-bar-m4.hidden {
+  display: none;
+}
+
+#m4-controls {
+  position: fixed;
+  right: 16px;
+  top: 76px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#m4-controls button {
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 22px;
+  line-height: 1;
+}
+
+#m4-controls button.active {
+  background: #AD50FF;
+}
+
+#m4-prompt {
+  padding: 12px 16px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+#m4-hint {
+  margin: 0 16px 10px;
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #ddd;
+  border-left: 3px solid #AD50FF;
+}
+
+#m4-info {
+  margin: 0 16px 12px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+#m4-hint.hidden,
+#m4-info.hidden {
+  display: none;
+}
+
+#m4-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 16px 10px;
+}
+
+#m4-actions button {
+  flex: 1 1 45%;
+  margin-bottom: 0;
+  font-size: 13px;
+  padding: 10px 8px;
+}
+
+#m4-actions button.small {
+  flex: 0 0 auto;
+  font-size: 12px;
+  padding: 6px 10px;
+  min-height: 32px;
+  width: auto;
+}
+
+#m4-trailer {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+#m4-trailer button {
+  flex: 1;
+  margin-bottom: 0;
+  font-size: 12px;
+  padding: 10px 6px;
+}
