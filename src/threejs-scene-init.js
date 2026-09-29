@@ -8,6 +8,7 @@ import * as THREE from 'three';
 
 import cubeTexture from './assets/cube-texture.png'
 import {buildHingedNetDefs, prismSolid, pyramidSolid, boxSolid} from './hinged-net'
+import {buildVolumeModel} from './volume-model'
 
 // Folded position/rotation match a unit BoxGeometry's faces. Net position/rotation lay the
 // faces out flat in a cross shape, all facing +z (same orientation as the front face).
@@ -350,7 +351,14 @@ export const initScenePipelineModule = () => {
   let groundUnits = 0
   let shapeRadius = 1
   let shapeHeight = 1
-  let compare = null // {group, k, ground, labelCmp, labelMain}
+  let compare = null // {group, k, ground, labelCmp, labelMain, radius?, height?}
+
+  // Materi 6 (volume): a parametric kubus/balok/prisma model (see ./volume-model.js) that replaces
+  // the face-based shapes while active. `pendingVolume*` hold requests made before the scene exists.
+  let volume = null
+  let pendingVolumeSpec = null
+  let pendingVolumePatch = {}
+  let allowedParts = null // limits which rusuk-select targets can be tapped (null = all)
 
   // Aspect target (materi 1's guided flow): which tap targets are active - 'sisi' (faces), 'rusuk'
   // (edgeMeshes) or 'titik' (vertexMeshes). Ignored while netMode is on (materi 2 always taps
@@ -437,24 +445,31 @@ export const initScenePipelineModule = () => {
       return
     }
     shapeGroup.scale.setScalar(viewZoom * kCur)
-    shapeGroup.position.y = groundUnits * kCur
+    shapeGroup.position.y = groundUnits * kCur * viewZoom
     homePosition.y = groundUnits * kCur
   }
 
   const makeLabelSprite = (text) => {
+    // A caption may have several lines ("\n"); a single line keeps the original look.
+    const lines = String(text).split('\n')
+    const multi = lines.length > 1
+    const lineHeight = 36
+    const height = multi ? lines.length * lineHeight + 24 : 64
     const c = document.createElement('canvas')
     c.width = 256
-    c.height = 64
+    c.height = height
     const ctx = c.getContext('2d')
     ctx.fillStyle = 'rgba(0,0,0,0.7)'
-    ctx.fillRect(0, 0, 256, 64)
+    ctx.fillRect(0, 0, 256, height)
     ctx.fillStyle = '#ffffff'
-    ctx.font = 'bold 28px sans-serif'
+    ctx.font = multi ? 'bold 22px sans-serif' : 'bold 28px sans-serif'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText(text, 128, 34)
+    lines.forEach((line, i) => {
+      ctx.fillText(line, 128, multi ? 12 + lineHeight * (i + 0.5) + 2 : 34)
+    })
     const sprite = new THREE.Sprite(new THREE.SpriteMaterial({map: new THREE.CanvasTexture(c), depthTest: false}))
-    sprite.scale.set(0.6, 0.15, 1)
+    sprite.scale.set(0.6, (0.15 * height) / 64, 1)
     sprite.renderOrder = 10
     return sprite
   }
@@ -474,12 +489,16 @@ export const initScenePipelineModule = () => {
     if (!compare || !shapeGroup) {
       return
     }
-    const offset = (shapeRadius * kCur + shapeRadius * compare.k + 0.35) * viewZoom
-    compare.group.position.set(shapeGroup.position.x - offset, compare.ground * compare.k, shapeGroup.position.z)
+    const otherRadius = compare.radius === undefined ? shapeRadius : compare.radius
+    const otherHeight = compare.height === undefined ? shapeHeight : compare.height
+    const offset = (shapeRadius * kCur + otherRadius * compare.k + 0.35) * viewZoom
+    compare.group.position.set(shapeGroup.position.x - offset, compare.ground * compare.k * viewZoom, shapeGroup.position.z)
     compare.group.rotation.copy(shapeGroup.rotation)
     compare.group.scale.setScalar(viewZoom * compare.k)
-    compare.labelCmp.position.set(compare.group.position.x, (shapeHeight * compare.k * viewZoom) + 0.3, compare.group.position.z)
-    compare.labelMain.position.set(shapeGroup.position.x, (shapeHeight * kCur * viewZoom) + 0.3, shapeGroup.position.z)
+    // Taller (multi-line) captions sit a little higher so they never cover the model.
+    const lift = (sprite) => 0.3 + (sprite.scale.y - 0.15) / 2
+    compare.labelCmp.position.set(compare.group.position.x, (otherHeight * compare.k * viewZoom) + lift(compare.labelCmp), compare.group.position.z)
+    compare.labelMain.position.set(shapeGroup.position.x, (shapeHeight * kCur * viewZoom) + lift(compare.labelMain), shapeGroup.position.z)
   }
 
   // Removes the current shape from the scene (if any) and adds the requested one in its place.
@@ -492,6 +511,8 @@ export const initScenePipelineModule = () => {
       sceneRef.remove(shapeGroup)
     }
     removeCompare()
+    volume = null
+    allowedParts = null
     viewZoom = 1
     kCur = 1
     kTarget = 1
@@ -530,6 +551,66 @@ export const initScenePipelineModule = () => {
     sceneRef.add(shapeGroup)
   }
 
+  const applyEdgeThickness = () => {
+    edgeMeshes.forEach((mesh) => mesh.scale.set(aspectTarget === 'rusuk-select' ? 3 : 1, 1, aspectTarget === 'rusuk-select' ? 3 : 1))
+  }
+
+  // Re-reads the size/tap targets of the volume model after it was (re)built.
+  const syncVolumeDims = () => {
+    if (!volume) {
+      return
+    }
+    edgeMeshes = volume.edgeMeshes
+    applyEdgeThickness()
+    groundUnits = volume.height / 2
+    shapeRadius = volume.radius
+    shapeHeight = volume.height
+    applyScale()
+  }
+
+  // Swaps whatever is on screen for a fresh volume model (materi 6).
+  const applyVolumeSpec = (spec) => {
+    if (!sceneRef) {
+      pendingVolumeSpec = spec
+      pendingVolumePatch = {}
+      return
+    }
+    if (shapeGroup) {
+      sceneRef.remove(shapeGroup)
+    }
+    removeCompare()
+    viewZoom = 1
+    kCur = 1
+    kTarget = 1
+    volume = buildVolumeModel(spec)
+    shapeGroup = volume.group
+    faces = []
+    vertexMeshes = []
+    applyPose = null
+    pyramidHeight = null
+    currentShapeId = 'volume'
+    isOpen = false
+    t = 0
+    tFrom = 0
+    tTo = 0
+    lastTapFace = null
+    measureMode = false
+    activeMeasureFace = null
+    orderLabels.length = 0
+    allowedParts = null
+    shapeGroup.position.set(0, volume.height / 2, 0)
+    homePosition = shapeGroup.position.clone()
+    sceneRef.add(shapeGroup)
+    syncVolumeDims()
+  }
+
+  const applyVolumePatch = (patch) => {
+    if (volume) {
+      volume.update(patch)
+      syncVolumeDims()
+    }
+  }
+
   // Populates the initial shape into an XR scene and sets the initial camera position.
   const initXrScene = ({scene, camera, renderer}) => {
     // Enable shadows in the rednerer.
@@ -545,6 +626,12 @@ export const initScenePipelineModule = () => {
     sceneRef = scene
     switchShape(pendingShapeId || currentShapeId)
     pendingShapeId = null
+    if (pendingVolumeSpec) {
+      applyVolumeSpec(pendingVolumeSpec)
+      applyVolumePatch(pendingVolumePatch)
+      pendingVolumeSpec = null
+      pendingVolumePatch = {}
+    }
 
     // Add a plane that can receive shadows.
     const planeGeometry = new THREE.PlaneGeometry(2000, 2000)
@@ -624,7 +711,7 @@ export const initScenePipelineModule = () => {
       return activeMeasureFace ? activeMeasureFace.userData.edgeMarkers.map(({mesh}) => mesh) : []
     }
     if (aspectTarget === 'rusuk' || aspectTarget === 'rusuk-select') {
-      return edgeMeshes
+      return allowedParts ? edgeMeshes.filter((_, i) => allowedParts.includes(i)) : edgeMeshes
     }
     if (aspectTarget === 'titik') {
       return vertexMeshes
@@ -845,7 +932,7 @@ export const initScenePipelineModule = () => {
     setAspectTarget: (target) => {
       aspectTarget = target
       // Thicker (easier to tap) rusuk targets while a student is picking a part to measure.
-      edgeMeshes.forEach((mesh) => mesh.scale.set(target === 'rusuk-select' ? 3 : 1, 1, target === 'rusuk-select' ? 3 : 1))
+      applyEdgeThickness()
     },
 
     // Clears every "observed" mark on the current shape (faces, edges, vertices) and hides the
@@ -1143,6 +1230,48 @@ export const initScenePipelineModule = () => {
 
     hideCompare: () => {
       removeCompare()
+    },
+
+    // --- Materi 6 additions (PRD-materi-6.md) ---
+
+    // Puts a fresh volume model on screen: {kind: 'box', cols, rows, layers} or
+    // {kind: 'prism', sides, length}. Can be called before the scene has started.
+    setVolumeModel: (spec) => {
+      applyVolumeSpec(spec)
+    },
+
+    // Changes the volume model in place: spec values (layers / length) and view values
+    // (unitsVisible, highlightLayer, visibleLayers, sliceOn, sliceFrac, ghost, lengthHighlight).
+    updateVolume: (patch) => {
+      if (volume) {
+        applyVolumePatch(patch)
+      } else if (pendingVolumeSpec) {
+        Object.assign(pendingVolumePatch, patch)
+      }
+    },
+
+    // Second, non-interactive copy of the volume model in another condition, shown beside the main
+    // one with a caption under-neath each (captions may have several lines).
+    showVolumeCompare: (otherSpec, captionOther, captionMain) => {
+      removeCompare()
+      if (!sceneRef || !volume) {
+        return
+      }
+      const other = buildVolumeModel(otherSpec)
+      const labelCmp = makeLabelSprite(captionOther)
+      const labelMain = makeLabelSprite(captionMain)
+      sceneRef.add(other.group)
+      sceneRef.add(labelCmp)
+      sceneRef.add(labelMain)
+      compare = {
+        group: other.group, k: 1, ground: other.height / 2, labelCmp, labelMain, radius: other.radius, height: other.height,
+      }
+      syncCompare()
+    },
+
+    // Limits which parts can be tapped while setAspectTarget('rusuk-select') is on (null = all).
+    setPickableParts: (indices) => {
+      allowedParts = indices
     },
   }
 }
